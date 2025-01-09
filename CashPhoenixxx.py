@@ -1,7 +1,6 @@
 import telebot
 from telebot import types
-import psycopg2
-from psycopg2 import pool
+import sqlite3
 from telebot.handler_backends import State, StatesGroup
 from telebot.apihelper import ApiException
 import os
@@ -17,10 +16,10 @@ CHANNEL_ID = '@CryptoWaveee'
 REFERRAL_REWARD = 0.5
 MIN_WITHDRAWAL = 10.0
 
-# Конфігурація бази даних PostgreSQL для Railway
-DATABASE_URL = os.environ.get('DATABASE_URL')
-if DATABASE_URL is None:
-    raise Exception("DATABASE_URL not found in environment variables")
+# Конфігурація шляхів для бази даних
+DATA_DIR = os.path.join(os.getcwd(), 'persistent_data')
+os.makedirs(DATA_DIR, exist_ok=True)
+DATABASE_PATH = os.path.join(DATA_DIR, 'bot_database.db')
 
 # Клас для станів користувача
 class UserState:
@@ -34,116 +33,127 @@ class UserState:
     waiting_admin_reward = 'waiting_admin_reward'
     waiting_admin_activations = 'waiting_admin_activations'
 
-# Створення пулу з'єднань
-connection_pool = psycopg2.pool.SimpleConnectionPool(
-    minconn=1,
-    maxconn=10,
-    dsn=DATABASE_URL
-)
+
+# Безпечне підключення до БД
+def safe_db_connect():
+    try:
+        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+        return conn
+    except sqlite3.Error as e:
+        error_msg = f"❌ Помилка підключення до БД: {str(e)}"
+        print(error_msg)
+        bot.send_message(ADMIN_ID, error_msg)
+        return None
+
 
 # Безпечне виконання SQL-запитів
 def safe_execute_sql(query, params=None, fetch_one=False):
-    conn = get_db_connection()
     try:
-        with conn.cursor() as cursor:
-            print(f"Executing query: {query}")
-            print(f"Parameters: {params}")
-            
-            if params is not None:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+        
+        print(f"Executing query: {query}")
+        print(f"Parameters: {params}")
+        
+        if params is not None:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
 
-            if fetch_one:
-                result = cursor.fetchone()
-            else:
-                result = cursor.fetchall()
-                
-            print(f"Query result: {result}")
+        if fetch_one:
+            result = cursor.fetchone()
+        else:
+            result = cursor.fetchall()
             
-            conn.commit()
-            return result
+        print(f"Query result: {result}")
+        
+        conn.commit()
+        conn.close()
+        return result
     except Exception as e:
         error_msg = f"Database error: {str(e)}"
         print(error_msg)
         bot.send_message(ADMIN_ID, error_msg)
         return None
-    finally:
-        return_db_connection(conn)
 
 def init_db():
-    conn = get_db_connection()
+    conn = safe_db_connect()
+    if not conn:
+        return
+
     try:
-        with conn.cursor() as c:
-            # Таблиця користувачів
-            c.execute('''CREATE TABLE IF NOT EXISTS users
-                (user_id BIGINT PRIMARY KEY,
-                 username TEXT,
-                 balance REAL DEFAULT 0,
-                 total_earnings REAL DEFAULT 0,
-                 referrer_id BIGINT,
-                 join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 state TEXT DEFAULT 'none',
-                 temp_data TEXT,
-                 FOREIGN KEY (referrer_id) REFERENCES users(user_id))''')
+        c = conn.cursor()
 
-            # Таблиця транзакцій
-            c.execute('''CREATE TABLE IF NOT EXISTS transactions
-                (id SERIAL PRIMARY KEY,
-                 user_id BIGINT,
-                 amount REAL,
-                 type TEXT,
-                 status TEXT,
-                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 FOREIGN KEY (user_id) REFERENCES users(user_id))''')
+        # Таблиця користувачів
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+            (user_id INTEGER PRIMARY KEY,
+             username TEXT,
+             balance REAL DEFAULT 0,
+             total_earnings REAL DEFAULT 0,
+             referrer_id INTEGER,
+             join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             state TEXT DEFAULT 'none',
+             temp_data TEXT,
+             FOREIGN KEY (referrer_id) REFERENCES users(user_id))''')
 
-            # Таблиця каналів
-            c.execute('''CREATE TABLE IF NOT EXISTS channels
-                (channel_id TEXT PRIMARY KEY,
-                 channel_name TEXT,
-                 channel_link TEXT,
-                 added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 is_required INTEGER DEFAULT 1)''')
+        # Таблиця транзакцій
+        c.execute('''CREATE TABLE IF NOT EXISTS transactions
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             user_id INTEGER,
+             amount REAL,
+             type TEXT,
+             status TEXT,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
 
-            # Таблиця промокодів
-            c.execute('''CREATE TABLE IF NOT EXISTS promo_codes
-                (code TEXT PRIMARY KEY,
-                 reward REAL,
-                 max_activations INTEGER,
-                 current_activations INTEGER DEFAULT 0,
-                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        # Таблиця каналів
+        c.execute('''CREATE TABLE IF NOT EXISTS channels
+            (channel_id TEXT PRIMARY KEY,
+             channel_name TEXT,
+             channel_link TEXT,
+             added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             is_required INTEGER DEFAULT 1)''')
 
-            # Таблиця використаних промокодів
-            c.execute('''CREATE TABLE IF NOT EXISTS used_promo_codes
-                (user_id BIGINT,
-                 promo_code TEXT,
-                 activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 PRIMARY KEY (user_id, promo_code),
-                 FOREIGN KEY (user_id) REFERENCES users (user_id),
-                 FOREIGN KEY (promo_code) REFERENCES promo_codes (code))''')
+        # Таблиця промокодів
+        c.execute('''CREATE TABLE IF NOT EXISTS promo_codes
+            (code TEXT PRIMARY KEY,
+             reward REAL,
+             max_activations INTEGER,
+             current_activations INTEGER DEFAULT 0,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-            # Таблиця тимчасових реферальних кодів
-            c.execute('''CREATE TABLE IF NOT EXISTS temp_referrals
-                (user_id BIGINT PRIMARY KEY,
-                 referral_code TEXT,
-                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        # Таблиця використаних промокодів
+        c.execute('''CREATE TABLE IF NOT EXISTS used_promo_codes
+            (user_id INTEGER,
+             promo_code TEXT,
+             activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             PRIMARY KEY (user_id, promo_code),
+             FOREIGN KEY (user_id) REFERENCES users (user_id),
+             FOREIGN KEY (promo_code) REFERENCES promo_codes (code))''')
 
-            # Таблиця відстеження усіх рефералів
-            c.execute('''CREATE TABLE IF NOT EXISTS referral_history
-                (id SERIAL PRIMARY KEY,
-                 referrer_id BIGINT NOT NULL,
-                 referral_user_id BIGINT NOT NULL,
-                 reward_amount REAL NOT NULL,
-                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        # Таблиця тимчасових реферальних кодів
+        c.execute('''CREATE TABLE IF NOT EXISTS temp_referrals
+            (user_id INTEGER PRIMARY KEY,
+             referral_code TEXT,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-            conn.commit()
-            print("✅ База даних успішно ініціалізована")
+        #Таблиця відстеження усіх рефералів
+        c.execute('''CREATE TABLE IF NOT EXISTS referral_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_id INTEGER NOT NULL,
+            referral_user_id INTEGER NOT NULL,
+            reward_amount REAL NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+
+        conn.commit()
+        print("✅ База даних успішно ініціалізована")
     except Exception as e:
         print(f"❌ Помилка ініціалізації БД: {str(e)}")
         bot.send_message(ADMIN_ID, f"❌ Помилка ініціалізації БД: {str(e)}")
     finally:
-        return_db_connection(conn)
+        conn.close()
 
 # Функція для створення таблиць промокодів
 def create_promo_codes_table():
@@ -157,15 +167,58 @@ def create_promo_codes_table():
         )
     ''')
 
+def backup_database():
+    try:
+        # Створюємо директорію для бекапів
+        backup_dir = os.path.join(DATA_DIR, 'backups')
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # Створюємо ім'я файлу з поточною датою та часом
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = os.path.join(backup_dir, f'bot_database_backup_{timestamp}.db')
+        
+        # Створюємо резервну копію
+        conn = sqlite3.connect(DATABASE_PATH)
+        backup = sqlite3.connect(backup_path)
+        conn.backup(backup)
+        
+        backup.close()
+        conn.close()
+        
+        # Видаляємо старі бекапи (залишаємо останні 5)
+        backup_files = sorted([f for f in os.listdir(backup_dir) if f.endswith('.db')])
+        for old_backup in backup_files[:-5]:
+            os.remove(os.path.join(backup_dir, old_backup))
+            
+        success_msg = f"✅ Створено резервну копію бази даних: {backup_path}"
+        print(success_msg)
+        bot.send_message(ADMIN_ID, success_msg)
+    except Exception as e:
+        error_msg = f"❌ Помилка створення резервної копії: {str(e)}"
+        print(error_msg)
+        bot.send_message(ADMIN_ID, error_msg)
 
-# Функції для роботи з каналами та перевірки підписки
+def run_scheduler():
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
 def add_required_channel(channel_id, channel_name, channel_link):
     try:
-        safe_execute_sql('''
-            INSERT INTO channels (channel_id, channel_name, channel_link, is_required)
-            VALUES (%s, %s, %s, 1)
-        ''', (channel_id, channel_name, channel_link))
+        conn = safe_db_connect()
+        if not conn:
+            return False
+
+        with conn:
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO channels (channel_id, channel_name, channel_link, is_required)
+                VALUES (?, ?, ?, 1)
+            ''', (channel_id, channel_name, channel_link))
         return True
+    except sqlite3.IntegrityError:
+        bot.send_message(ADMIN_ID, "❌ Канал з таким ID вже існує в базі даних.")
+        return False
     except Exception as e:
         bot.send_message(ADMIN_ID, f"❌ Помилка додавання каналу: {str(e)}")
         return False
@@ -192,6 +245,27 @@ def check_subscription(user_id):
     except Exception as e:
         print(f"Загальна помилка: {str(e)}")
         return False
+
+def check_users_table(user_id):  # Додаємо параметр user_id
+    try:
+        conn = sqlite3.connect('bot_database.db')
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(users)")
+        columns = cursor.fetchall()
+        print(f"Users table structure:", columns)
+        conn.close()
+    except Exception as e:
+        print(f"Error checking users table: {str(e)}")
+
+    # Добавте цей запит для перевірки
+    user_exists = safe_execute_sql(
+        'SELECT 1 FROM users WHERE user_id = ?',
+        (user_id,),
+        fetch_one=True
+    )
+
+    if not user_exists:
+        print(f"User {user_id} not found in database")
 
 
 def create_main_keyboard(user_id):
@@ -1539,6 +1613,44 @@ def handle_user_deletion(message):
     except ValueError:
         bot.send_message(ADMIN_ID, "❌ Невірний формат ID користувача. Спробуйте ще раз.")
 
+# Функція для безпечного виконання SQL-запитів
+def safe_execute_sql(query, params=None, fetch_one=False):
+    try:
+        conn = sqlite3.connect('bot_database.db')
+        cursor = conn.cursor()
+
+        if params is not None:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+
+        if fetch_one:
+            result = cursor.fetchone()
+        else:
+            result = cursor.fetchall()
+
+        conn.commit()
+        conn.close()
+        return result
+    except Exception as e:
+        print(f"Database error: {str(e)}")
+        return None
+
+
+def check_table_structure():
+    try:
+        conn = sqlite3.connect('bot_database.db')
+        cursor = conn.cursor()
+
+        # Отримуємо інформацію про структуру таблиці channels
+        cursor.execute("PRAGMA table_info(channels)")
+        columns = cursor.fetchall()
+        print("Структура таблиці channels:", columns)
+
+        conn.close()
+    except Exception as e:
+        print(f"Помилка при перевірці структури таблиці: {str(e)}")
+
 
 # Запуск бота
 if __name__ == "__main__":
@@ -1552,6 +1664,21 @@ if __name__ == "__main__":
             VALUES (?, ?, ?, ?)
         ''', ('-1002157115077', 'CryptoWave', 'https://t.me/CryptoWaveee', 1))
         
+        # Перевіряємо структуру таблиць
+        check_table_structure()
+        
+        # Налаштовуємо регулярне резервне копіювання
+        print("📑 Налаштування планувальника резервного копіювання...")
+        schedule.every(6).hours.do(backup_database)
+        
+        # Запускаємо планувальник в окремому потоці
+        scheduler_thread = threading.Thread(target=run_scheduler)
+        scheduler_thread.daemon = True
+        scheduler_thread.start()
+        
+        # Створюємо першу резервну копію при запуску
+        print("💾 Створення резервної копії...")
+        backup_database()
         
         print("🚀 Бот запущений...")
         bot.polling(none_stop=True)
