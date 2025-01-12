@@ -1,6 +1,7 @@
 import telebot
 from telebot import types
 import sqlite3
+import os
 from telebot.handler_backends import State, StatesGroup
 from telebot.apihelper import ApiException
 
@@ -10,6 +11,31 @@ ADMIN_ID = 1270564746
 CHANNEL_ID = '@CryptoWaveee'
 REFERRAL_REWARD = 0.5
 MIN_WITHDRAWAL = 10.0
+
+# Налаштування шляхів для бази даних
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_DIR = os.path.join(BASE_DIR, 'database')
+DATABASE_PATH = os.path.join(DATABASE_DIR, 'bot_database.db')
+
+def ensure_database_exists():
+    """Функція для перевірки та створення необхідних директорій та бази даних"""
+    try:
+        # Створюємо директорію для бази даних, якщо вона не існує
+        if not os.path.exists(DATABASE_DIR):
+            os.makedirs(DATABASE_DIR)
+            print(f"✅ Створено директорію бази даних: {DATABASE_DIR}")
+
+        # Перевіряємо чи існує файл бази даних
+        if not os.path.exists(DATABASE_PATH):
+            # Створюємо з'єднання, що автоматично створить файл бази даних
+            conn = sqlite3.connect(DATABASE_PATH)
+            conn.close()
+            print(f"✅ Створено файл бази даних: {DATABASE_PATH}")
+            return True
+        return True
+    except Exception as e:
+        print(f"❌ Помилка при створенні бази даних: {str(e)}")
+        return False
 
 
 # Клас для станів користувача
@@ -25,20 +51,29 @@ class UserState:
     waiting_admin_activations = 'waiting_admin_activations'
 
 
-# Безпечне підключення до БД
 def safe_db_connect():
+    """Функція для безпечного підключення до бази даних"""
     try:
-        conn = sqlite3.connect('bot_database.db', check_same_thread=False)
+        # Спочатку переконуємося, що база даних існує
+        if not ensure_database_exists():
+            raise Exception("Не вдалося забезпечити існування бази даних")
+            
+        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
         return conn
     except sqlite3.Error as e:
-        bot.send_message(ADMIN_ID, f"❌ Помилка підключення до БД: {str(e)}")
+        error_message = f"❌ Помилка підключення до БД: {str(e)}"
+        print(error_message)
+        bot.send_message(ADMIN_ID, error_message)
         return None
 
-
-# Безпечне виконання SQL-запитів
 def safe_execute_sql(query, params=None, fetch_one=False):
+    """Функція для безпечного виконання SQL-запитів"""
     try:
-        conn = sqlite3.connect('bot_database.db')
+        # Перевіряємо наявність бази даних перед кожним запитом
+        if not ensure_database_exists():
+            raise Exception("База даних не доступна")
+
+        conn = sqlite3.connect(DATABASE_PATH)
         cursor = conn.cursor()
         
         print(f"Executing query: {query}")
@@ -60,10 +95,15 @@ def safe_execute_sql(query, params=None, fetch_one=False):
         conn.close()
         return result
     except Exception as e:
-        print(f"Database error: {str(e)}")
+        error_message = f"Database error: {str(e)}"
+        print(error_message)
         return None
 
 def init_db():
+    """Функція для ініціалізації бази даних"""
+    if not ensure_database_exists():
+        return
+
     conn = safe_db_connect()
     if not conn:
         return
@@ -136,6 +176,7 @@ def init_db():
 
         conn.commit()
         print("✅ База даних успішно ініціалізована")
+        print(f"📁 Шлях до бази даних: {DATABASE_PATH}")
     except Exception as e:
         print(f"❌ Помилка ініціалізації БД: {str(e)}")
         bot.send_message(ADMIN_ID, f"❌ Помилка ініціалізації БД: {str(e)}")
@@ -1144,7 +1185,8 @@ def back_to_main_menu(message):
         '💳 Вывести деньги',
         '📊 Моя статистика',
         '🍀 Промокод',
-        '🏆 Таблица лидеров'
+        '🏆 Таблица лидеров',
+        '🛠️Тех.Поддержка'
     ]
 
     # Додаємо кнопки адмін-панелі для адміністратора
@@ -1605,6 +1647,7 @@ def check_table_structure():
 # Запуск бота
 if __name__ == "__main__":
     try:
+        ensure_database_exists()
         init_db()  # Викликаємо функцію для створення всіх таблиць
         
         # Додавання тестового каналу

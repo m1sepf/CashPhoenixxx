@@ -1,0 +1,8 @@
+{
+    "mounts": [
+      {
+        "path": "/app/database",
+        "volume": "sqlite-data"
+      }
+    ]
+  }

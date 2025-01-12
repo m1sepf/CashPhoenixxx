@@ -1,5 +1,27 @@
-*.exe
-downloads/
+echo "# База даних SQLite
+database/
+*.db
+
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+dist/
+*.egg-info/
+
+# Віртуальне середовище
 venv/
-*.pyc
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Системні файли
+.DS_Store
+Thumbs.db" > .gitignore
