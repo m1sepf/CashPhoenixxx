@@ -1649,23 +1649,6 @@ if __name__ == "__main__":
     try:
         ensure_database_exists()
         init_db()  # Викликаємо функцію для створення всіх таблиць
-
-        # Спочатку створюємо таблицю, якщо вона не існує
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS channels (
-                channel_id TEXT,
-                channel_name TEXT,
-                channel_link TEXT,
-                is_required INTEGER DEFAULT 1,
-                added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
-
-        # Потім вже перевіряємо структуру
-        cursor.execute("PRAGMA table_info(channels)")
-        structure = cursor.fetchall()
-        print(f"Структура таблиці channels: {structure}")
         
         # Додавання тестового каналу
         safe_execute_sql('''
