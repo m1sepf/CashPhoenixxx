@@ -6,7 +6,7 @@ from telebot.handler_backends import State, StatesGroup
 from telebot.apihelper import ApiException
 
 # Конфігураційні константи
-bot = telebot.TeleBot('7577998733:AAGRrJFPBVlvPBr9U9RczJotS7xkLoJ6OaI')
+bot = telebot.TeleBot('BOT_TOKEN')
 ADMIN_ID = 1270564746
 CHANNEL_ID = '@CryptoWaveee'
 REFERRAL_REWARD = 0.5
@@ -14,8 +14,8 @@ MIN_WITHDRAWAL = 10.0
 
 # Налаштування шляхів для бази даних
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_DIR = os.path.join(BASE_DIR, 'database')
-DATABASE_PATH = os.path.join(DATABASE_DIR, 'bot_database.db')
+DATABASE_DIR = os.path.join(BASE_DIR, os.getenv('DATABASE_DIR', 'database'))
+DATABASE_PATH = os.path.join(DATABASE_DIR, os.getenv('DATABASE_PATH', 'bot_database.db'))
 
 def ensure_database_exists():
     """Функція для перевірки та створення необхідних директорій та бази даних"""
