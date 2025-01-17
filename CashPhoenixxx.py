@@ -277,86 +277,130 @@ def safe_execute_sql(query, params=None, fetch_one=False):
 def init_db():
     """Функція для ініціалізації бази даних"""
     if not ensure_database_exists():
-        return
-
-    conn = safe_db_connect()
-    if not conn:
-        return
-
+        logger.error("❌ Failed to ensure database exists")
+        return False
+        
     try:
-        c = conn.cursor()
+        # Використовуємо контекстний менеджер для автоматичного закриття з'єднання
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            
+            # Створюємо таблиці в правильному порядку (спочатку основні, потім залежні)
+            
+            # 1. Users table (основна таблиця)
+            c.execute('''CREATE TABLE IF NOT EXISTS users
+                (user_id INTEGER PRIMARY KEY,
+                 username TEXT,
+                 balance REAL DEFAULT 0,
+                 total_earnings REAL DEFAULT 0,
+                 referrer_id INTEGER,
+                 join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                 last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                 state TEXT DEFAULT 'none',
+                 temp_data TEXT)''')
+                 
+            # 2. Channels table (незалежна таблиця)
+            c.execute('''CREATE TABLE IF NOT EXISTS channels
+                (channel_id TEXT PRIMARY KEY,
+                 channel_name TEXT,
+                 channel_link TEXT,
+                 added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                 is_required INTEGER DEFAULT 1)''')
+                 
+            # 3. Transactions table (залежить від users)
+            c.execute('''CREATE TABLE IF NOT EXISTS transactions
+                (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 user_id INTEGER,
+                 amount REAL,
+                 type TEXT,
+                 status TEXT,
+                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                 FOREIGN KEY (user_id) REFERENCES users(user_id))''')
+                 
+            # 4. Promo codes table (незалежна таблиця)
+            c.execute('''CREATE TABLE IF NOT EXISTS promo_codes
+                (code TEXT PRIMARY KEY,
+                 reward REAL,
+                 max_activations INTEGER,
+                 current_activations INTEGER DEFAULT 0,
+                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+                 
+            # 5. Used promo codes table (залежить від users та promo_codes)
+            c.execute('''CREATE TABLE IF NOT EXISTS used_promo_codes
+                (user_id INTEGER,
+                 promo_code TEXT,
+                 activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                 PRIMARY KEY (user_id, promo_code),
+                 FOREIGN KEY (user_id) REFERENCES users(user_id),
+                 FOREIGN KEY (promo_code) REFERENCES promo_codes(code))''')
+                 
+            # 6. Temporary referrals table (незалежна таблиця)
+            c.execute('''CREATE TABLE IF NOT EXISTS temp_referrals
+                (user_id INTEGER PRIMARY KEY,
+                 referral_code TEXT,
+                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+                 
+            # 7. Referral history table (залежить від users)
+            c.execute('''CREATE TABLE IF NOT EXISTS referral_history
+                (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 referrer_id INTEGER NOT NULL,
+                 referral_user_id INTEGER NOT NULL,
+                 reward_amount REAL NOT NULL,
+                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                 FOREIGN KEY (referrer_id) REFERENCES users(user_id),
+                 FOREIGN KEY (referral_user_id) REFERENCES users(user_id))''')
 
-        # Таблиця користувачів
-        c.execute('''CREATE TABLE IF NOT EXISTS users
-            (user_id INTEGER PRIMARY KEY,
-             username TEXT,
-             balance REAL DEFAULT 0,
-             total_earnings REAL DEFAULT 0,
-             referrer_id INTEGER,
-             join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             state TEXT DEFAULT 'none',
-             temp_data TEXT,
-             FOREIGN KEY (referrer_id) REFERENCES users(user_id))''')
-
-        # Таблиця транзакцій
-        c.execute('''CREATE TABLE IF NOT EXISTS transactions
-            (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             user_id INTEGER,
-             amount REAL,
-             type TEXT,
-             status TEXT,
-             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
-
-        # Таблиця каналів
-        c.execute('''CREATE TABLE IF NOT EXISTS channels
-            (channel_id TEXT PRIMARY KEY,
-             channel_name TEXT,
-             channel_link TEXT,
-             added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             is_required INTEGER DEFAULT 1)''')
-
-        # Таблиця промокодів
-        c.execute('''CREATE TABLE IF NOT EXISTS promo_codes
-            (code TEXT PRIMARY KEY,
-             reward REAL,
-             max_activations INTEGER,
-             current_activations INTEGER DEFAULT 0,
-             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-
-        # Таблиця використаних промокодів
-        c.execute('''CREATE TABLE IF NOT EXISTS used_promo_codes
-            (user_id INTEGER,
-             promo_code TEXT,
-             activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             PRIMARY KEY (user_id, promo_code),
-             FOREIGN KEY (user_id) REFERENCES users (user_id),
-             FOREIGN KEY (promo_code) REFERENCES promo_codes (code))''')
-
-        # Таблиця тимчасових реферальних кодів
-        c.execute('''CREATE TABLE IF NOT EXISTS temp_referrals
-            (user_id INTEGER PRIMARY KEY,
-             referral_code TEXT,
-             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-
-        #Таблиця відстеження усіх рефералів
-        c.execute('''CREATE TABLE IF NOT EXISTS referral_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            referrer_id INTEGER NOT NULL,
-            referral_user_id INTEGER NOT NULL,
-            reward_amount REAL NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-
-
-        conn.commit()
-        print("✅ База даних успішно ініціалізована")
-        print(f"📁 Шлях до бази даних: {DATABASE_PATH}")
+            # Перевіряємо створення таблиць
+            c.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = c.fetchall()
+            logger.info(f"✅ Created tables: {[table[0] for table in tables]}")
+            
+            # Додаємо базовий канал тільки якщо таблиця channels порожня
+            c.execute("SELECT COUNT(*) FROM channels")
+            if c.fetchone()[0] == 0:
+                c.execute('''
+                    INSERT INTO channels (channel_id, channel_name, channel_link, is_required)
+                    VALUES (?, ?, ?, ?)
+                ''', ('-1002157115077', 'CryptoWave', 'https://t.me/CryptoWaveee', 1))
+                logger.info("✅ Added default channel")
+                
+            conn.commit()
+            logger.info("✅ Database initialized successfully")
+            return True
+            
+    except sqlite3.Error as e:
+        logger.error(f"❌ Database initialization error: {str(e)}")
+        return False
     except Exception as e:
-        print(f"❌ Помилка ініціалізації БД: {str(e)}")
-        bot.send_message(ADMIN_ID, f"❌ Помилка ініціалізації БД: {str(e)}")
-    finally:
-        conn.close()
+        logger.error(f"❌ Unexpected error during database initialization: {str(e)}")
+        return False
+
+def check_and_repair_db():
+    """Функція для перевірки та відновлення структури бази даних"""
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            
+            # Перевіряємо наявність всіх таблиць
+            required_tables = ['users', 'channels', 'transactions', 'promo_codes', 
+                             'used_promo_codes', 'temp_referrals', 'referral_history']
+            
+            c.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            existing_tables = [table[0] for table in c.fetchall()]
+            
+            missing_tables = set(required_tables) - set(existing_tables)
+            
+            if missing_tables:
+                logger.warning(f"❗ Missing tables detected: {missing_tables}")
+                # Викликаємо init_db() для створення відсутніх таблиць
+                return init_db()
+            
+            logger.info("✅ All required tables exist")
+            return True
+            
+    except sqlite3.Error as e:
+        logger.error(f"❌ Database check error: {str(e)}")
+        return False
 
 # Функція для створення таблиць промокодів
 def create_promo_codes_table():
