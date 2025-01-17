@@ -465,6 +465,7 @@ def start(message):
     username = message.from_user.username or "Anonymous"
 
     # Додаємо цей блок коду для збереження реферального коду
+    referral_code = None
     if len(message.text.split()) > 1:
         referral_code = message.text.split()[1]
         safe_execute_sql(
