@@ -4,39 +4,219 @@ import sqlite3
 import os
 from telebot.handler_backends import State, StatesGroup
 from telebot.apihelper import ApiException
+import requests
+import time
+import json
+from threading import Thread
+import logging
+import tempfile 
 
 # Конфігураційні константи
-bot = telebot.TeleBot(os.getenv('BOT_TOKEN'))
+bot = telebot.TeleBot('BOT_TOKEN')
 ADMIN_ID = 1270564746
 CHANNEL_ID = '@CryptoWaveee'
 REFERRAL_REWARD = 0.5
 MIN_WITHDRAWAL = 10.0
 
-# Налаштування шляхів для бази даних
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_DIR = os.path.join(BASE_DIR, os.getenv('DATABASE_DIR', 'database'))
-DATABASE_PATH = os.path.join(DATABASE_DIR, os.getenv('DATABASE_PATH', 'bot_database.db'))
+# Новий шлях до БД
+DATABASE_PATH = os.path.join(tempfile.gettempdir(), 'bot_database.db')
 
-def ensure_database_exists():
-    """Функція для перевірки та створення необхідних директорій та бази даних"""
+# Конфігурація Dropbox
+DROPBOX_ACCESS_TOKEN = os.getenv('DROPBOX_ACCESS_TOKEN')
+BACKUP_INTERVAL = 3600  # 1 година
+
+# Налаштування логування
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def backup_database():
+    """Функція для створення бекапу бази даних в Dropbox"""
     try:
-        # Створюємо директорію для бази даних, якщо вона не існує
-        if not os.path.exists(DATABASE_DIR):
-            os.makedirs(DATABASE_DIR)
-            print(f"✅ Створено директорію бази даних: {DATABASE_DIR}")
-
+        # Перевіряємо чи є токен
+        if not DROPBOX_ACCESS_TOKEN:
+            logger.error("❌ Відсутній токен Dropbox")
+            return False
+            
         # Перевіряємо чи існує файл бази даних
         if not os.path.exists(DATABASE_PATH):
-            # Створюємо з'єднання, що автоматично створить файл бази даних
-            conn = sqlite3.connect(DATABASE_PATH)
-            conn.close()
-            print(f"✅ Створено файл бази даних: {DATABASE_PATH}")
+            logger.error("❌ Файл бази даних не знайдено")
+            return False
+
+        # Закриваємо всі з'єднання з базою даних
+        try:
+            sqlite3.connect(DATABASE_PATH).close()
+        except:
+            pass
+
+        # Читаємо файл бази даних
+        with open(DATABASE_PATH, 'rb') as f:
+            data = f.read()
+
+        # Завантажуємо в Dropbox
+        response = requests.post(
+            "https://content.dropboxapi.com/2/files/upload",
+            headers={
+                "Authorization": f"Bearer {DROPBOX_ACCESS_TOKEN}",
+                "Dropbox-API-Arg": json.dumps({
+                    "path": "/bot_database.db",
+                    "mode": "overwrite"
+                }),
+                "Content-Type": "application/octet-stream"
+            },
+            data=data
+        )
+        
+        if response.status_code == 200:
+            logger.info("✅ База даних успішно збережена в Dropbox")
             return True
-        return True
+        else:
+            logger.error(f"❌ Помилка збереження бази даних: {response.text}")
+            return False
+            
     except Exception as e:
-        print(f"❌ Помилка при створенні бази даних: {str(e)}")
+        logger.error(f"❌ Помилка бекапу: {str(e)}")
         return False
 
+def restore_database():
+    """Функція для відновлення бази даних з Dropbox"""
+    try:
+        if not DROPBOX_ACCESS_TOKEN:
+            logger.error("❌ Відсутній токен Dropbox")
+            return False
+
+        # Завантажуємо файл з Dropbox
+        response = requests.post(
+            "https://content.dropboxapi.com/2/files/download",
+            headers={
+                "Authorization": f"Bearer {DROPBOX_ACCESS_TOKEN}",
+                "Dropbox-API-Arg": json.dumps({
+                    "path": "/bot_database.db"
+                })
+            }
+        )
+        
+        if response.status_code == 200:
+            # Створюємо директорію якщо її немає
+            os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
+            
+            # Зберігаємо завантажений файл
+            with open(DATABASE_PATH, 'wb') as f:
+                f.write(response.content)
+            logger.info("✅ База даних успішно відновлена з Dropbox")
+            return True
+        else:
+            logger.error(f"❌ Помилка відновлення бази даних: {response.status_code}, {response.text}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Помилка відновлення: {str(e)}")
+        return False
+
+def ensure_database_exists():
+    """Функція для перевірки та створення бази даних"""
+    try:
+        # Спочатку пробуємо відновити з бекапу
+        if not os.path.exists(DATABASE_PATH):
+            logger.info("Спроба відновлення бази даних з Dropbox...")
+            if restore_database():
+                return True
+            logger.info("Відновлення не вдалося, створюємо нову базу даних...")
+
+        # Якщо відновлення не вдалось або файл вже існує
+        conn = sqlite3.connect(DATABASE_PATH)
+        c = conn.cursor()
+        
+        # Створюємо всі необхідні таблиці
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+            (user_id INTEGER PRIMARY KEY,
+             username TEXT,
+             balance REAL DEFAULT 0,
+             total_earnings REAL DEFAULT 0,
+             referrer_id INTEGER,
+             join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             state TEXT DEFAULT 'none',
+             temp_data TEXT,
+             FOREIGN KEY (referrer_id) REFERENCES users(user_id))''')
+
+         # Таблиця транзакцій
+        c.execute('''CREATE TABLE IF NOT EXISTS transactions
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             user_id INTEGER,
+             amount REAL,
+             type TEXT,
+             status TEXT,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
+
+        # Таблиця каналів
+        c.execute('''CREATE TABLE IF NOT EXISTS channels
+            (channel_id TEXT PRIMARY KEY,
+             channel_name TEXT,
+             channel_link TEXT,
+             added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             is_required INTEGER DEFAULT 1)''')
+
+        # Таблиця промокодів
+        c.execute('''CREATE TABLE IF NOT EXISTS promo_codes
+            (code TEXT PRIMARY KEY,
+             reward REAL,
+             max_activations INTEGER,
+             current_activations INTEGER DEFAULT 0,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+        # Таблиця використаних промокодів
+        c.execute('''CREATE TABLE IF NOT EXISTS used_promo_codes
+            (user_id INTEGER,
+             promo_code TEXT,
+             activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             PRIMARY KEY (user_id, promo_code),
+             FOREIGN KEY (user_id) REFERENCES users (user_id),
+             FOREIGN KEY (promo_code) REFERENCES promo_codes (code))''')
+
+        # Таблиця тимчасових реферальних кодів
+        c.execute('''CREATE TABLE IF NOT EXISTS temp_referrals
+            (user_id INTEGER PRIMARY KEY,
+             referral_code TEXT,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+        #Таблиця відстеження усіх рефералів
+        c.execute('''CREATE TABLE IF NOT EXISTS referral_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_id INTEGER NOT NULL,
+            referral_user_id INTEGER NOT NULL,
+            reward_amount REAL NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+
+        conn.commit()
+        conn.close()
+
+        # Робимо бекап нової бази
+        backup_database()
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Помилка при створенні бази даних: {str(e)}")
+        return False
+
+def schedule_backup():
+    """Функція для періодичного бекапу"""
+    while True:
+        try:
+            backup_database()
+            time.sleep(BACKUP_INTERVAL)
+        except Exception as e:
+            logger.error(f"❌ Помилка планувальника бекапу: {str(e)}")
+            time.sleep(60)
+
+# Запускаємо періодичний бекап в окремому потоці
+try:
+    backup_thread = Thread(target=schedule_backup, daemon=True)
+    backup_thread.start()
+    logger.info("✅ Запущено планувальник бекапу")
+except Exception as e:
+    logger.error(f"❌ Помилка запуску планувальника: {str(e)}")
 
 # Клас для станів користувача
 class UserState:
@@ -76,9 +256,6 @@ def safe_execute_sql(query, params=None, fetch_one=False):
         conn = sqlite3.connect(DATABASE_PATH)
         cursor = conn.cursor()
         
-        print(f"Executing query: {query}")
-        print(f"Parameters: {params}")
-        
         if params is not None:
             cursor.execute(query, params)
         else:
@@ -89,14 +266,11 @@ def safe_execute_sql(query, params=None, fetch_one=False):
         else:
             result = cursor.fetchall()
             
-        print(f"Query result: {result}")
-        
         conn.commit()
         conn.close()
         return result
     except Exception as e:
-        error_message = f"Database error: {str(e)}"
-        print(error_message)
+        logger.error(f"Database error: {str(e)}")
         return None
 
 def init_db():
