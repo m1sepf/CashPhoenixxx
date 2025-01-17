@@ -1819,12 +1819,46 @@ def check_table_structure():
     except Exception as e:
         print(f"Помилка при перевірці структури таблиці: {str(e)}")
 
+# Перед bot.polling()
+def setup():
+    try:
+        # Створюємо з'єднання
+        conn = sqlite3.connect(DATABASE_PATH)
+        c = conn.cursor()
+        
+        # Створюємо всі необхідні таблиці
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+            (user_id INTEGER PRIMARY KEY,
+             username TEXT,
+             balance REAL DEFAULT 0,
+             total_earnings REAL DEFAULT 0,
+             referrer_id INTEGER,
+             join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             state TEXT DEFAULT 'none',
+             temp_data TEXT)''')
+             
+        c.execute('''CREATE TABLE IF NOT EXISTS channels
+            (channel_id TEXT PRIMARY KEY,
+             channel_name TEXT,
+             channel_link TEXT,
+             added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             is_required INTEGER DEFAULT 1)''')
+             
+        conn.commit()
+        logger.info("✅ Database tables created successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Error creating tables: {str(e)}")
+    finally:
+        conn.close()
 
 # Запуск бота
 if __name__ == "__main__":
     try:
         ensure_database_exists()
         init_db()  # Викликаємо функцію для створення всіх таблиць
+        setup()
         
         # Додавання тестового каналу
         safe_execute_sql('''
