@@ -12,13 +12,12 @@ import logging
 import tempfile 
 
 # Конфігураційні константи
-bot = telebot.TeleBot('BOT_TOKEN')
+bot = telebot.TeleBot(os.getenv('BOT_TOKEN'))
 ADMIN_ID = 1270564746
 CHANNEL_ID = '@CryptoWaveee'
 REFERRAL_REWARD = 0.5
 MIN_WITHDRAWAL = 10.0
 
-bot = telebot.TeleBot(os.getenv('BOT_TOKEN'))
 
 # Новий шлях до БД
 DATABASE_PATH = os.path.join(tempfile.gettempdir(), 'bot_database.db')
