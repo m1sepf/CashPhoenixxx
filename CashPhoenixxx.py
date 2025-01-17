@@ -4,130 +4,114 @@ import sqlite3
 import os
 from telebot.handler_backends import State, StatesGroup
 from telebot.apihelper import ApiException
-import requests
-import time
-import json
-from threading import Thread
-import logging
-import tempfile 
 
 # Конфігураційні константи
-bot = telebot.TeleBot(os.getenv('BOT_TOKEN'))
+bot = telebot.TeleBot('7577998733:AAGRrJFPBVlvPBr9U9RczJotS7xkLoJ6OaI')
 ADMIN_ID = 1270564746
 CHANNEL_ID = '@CryptoWaveee'
 REFERRAL_REWARD = 0.5
 MIN_WITHDRAWAL = 10.0
 
-
-# Новий шлях до БД
-DATABASE_PATH = os.path.join(tempfile.gettempdir(), 'bot_database.db')
-
-# Конфігурація Dropbox
-DROPBOX_ACCESS_TOKEN = os.getenv('DROPBOX_ACCESS_TOKEN')
-BACKUP_INTERVAL = 3600  # 1 година
-
-# Налаштування логування
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-def backup_database():
-    """Функція для створення бекапу бази даних в Dropbox"""
-    try:
-        # Перевіряємо чи є токен
-        if not DROPBOX_ACCESS_TOKEN:
-            logger.error("❌ Відсутній токен Dropbox")
-            return False
-            
-        # Перевіряємо чи існує файл бази даних
-        if not os.path.exists(DATABASE_PATH):
-            logger.error("❌ Файл бази даних не знайдено")
-            return False
-
-        # Закриваємо всі з'єднання з базою даних
-        try:
-            sqlite3.connect(DATABASE_PATH).close()
-        except:
-            pass
-
-        # Читаємо файл бази даних
-        with open(DATABASE_PATH, 'rb') as f:
-            data = f.read()
-
-        # Завантажуємо в Dropbox
-        response = requests.post(
-            "https://content.dropboxapi.com/2/files/upload",
-            headers={
-                "Authorization": f"Bearer {DROPBOX_ACCESS_TOKEN}",
-                "Dropbox-API-Arg": json.dumps({
-                    "path": "/bot_database.db",
-                    "mode": "overwrite"
-                }),
-                "Content-Type": "application/octet-stream"
-            },
-            data=data
-        )
-        
-        if response.status_code == 200:
-            logger.info("✅ База даних успішно збережена в Dropbox")
-            return True
-        else:
-            logger.error(f"❌ Помилка збереження бази даних: {response.text}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"❌ Помилка бекапу: {str(e)}")
-        return False
-
-def restore_database():
-    """Функція для відновлення бази даних з Dropbox"""
-    try:
-        if not DROPBOX_ACCESS_TOKEN:
-            logger.error("❌ Відсутній токен Dropbox")
-            return False
-
-        # Завантажуємо файл з Dropbox
-        response = requests.post(
-            "https://content.dropboxapi.com/2/files/download",
-            headers={
-                "Authorization": f"Bearer {DROPBOX_ACCESS_TOKEN}",
-                "Dropbox-API-Arg": json.dumps({
-                    "path": "/bot_database.db"
-                })
-            }
-        )
-        
-        if response.status_code == 200:
-            # Створюємо директорію якщо її немає
-            os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
-            
-            # Зберігаємо завантажений файл
-            with open(DATABASE_PATH, 'wb') as f:
-                f.write(response.content)
-            logger.info("✅ База даних успішно відновлена з Dropbox")
-            return True
-        else:
-            logger.error(f"❌ Помилка відновлення бази даних: {response.status_code}, {response.text}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"❌ Помилка відновлення: {str(e)}")
-        return False
+# Налаштування шляхів для бази даних
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_DIR = os.path.join(BASE_DIR, 'database')
+DATABASE_PATH = os.path.join(DATABASE_DIR, 'bot_database.db')
 
 def ensure_database_exists():
-    """Функція для перевірки та створення бази даних"""
+    """Функція для перевірки та створення необхідних директорій та бази даних"""
     try:
-        # Спочатку пробуємо відновити з бекапу
-        if not os.path.exists(DATABASE_PATH):
-            logger.info("Спроба відновлення бази даних з Dropbox...")
-            if restore_database():
-                return True
-            logger.info("Відновлення не вдалося, створюємо нову базу даних...")
+        # Створюємо директорію для бази даних, якщо вона не існує
+        if not os.path.exists(DATABASE_DIR):
+            os.makedirs(DATABASE_DIR)
+            print(f"✅ Створено директорію бази даних: {DATABASE_DIR}")
 
-        # Якщо відновлення не вдалось або файл вже існує
+        # Перевіряємо чи існує файл бази даних
+        if not os.path.exists(DATABASE_PATH):
+            # Створюємо з'єднання, що автоматично створить файл бази даних
+            conn = sqlite3.connect(DATABASE_PATH)
+            conn.close()
+            print(f"✅ Створено файл бази даних: {DATABASE_PATH}")
+            return True
+        return True
+    except Exception as e:
+        print(f"❌ Помилка при створенні бази даних: {str(e)}")
+        return False
+
+
+# Клас для станів користувача
+class UserState:
+    none = 'NONE'
+    waiting_for_withdrawal = 'WAITING_FOR_WITHDRAWAL'
+    waiting_for_broadcast = 'WAITING_FOR_BROADCAST'
+    waiting_for_channel_add = 'WAITING_FOR_CHANNEL_ADD'
+    waiting_for_balance_change = 'WAITING_FOR_BALANCE_CHANGE'
+    waiting_promo = 'waiting_promo'
+    waiting_admin_promo = 'waiting_admin_promo'
+    waiting_admin_reward = 'waiting_admin_reward'
+    waiting_admin_activations = 'waiting_admin_activations'
+
+
+def safe_db_connect():
+    """Функція для безпечного підключення до бази даних"""
+    try:
+        # Спочатку переконуємося, що база даних існує
+        if not ensure_database_exists():
+            raise Exception("Не вдалося забезпечити існування бази даних")
+            
+        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+        return conn
+    except sqlite3.Error as e:
+        error_message = f"❌ Помилка підключення до БД: {str(e)}"
+        print(error_message)
+        bot.send_message(ADMIN_ID, error_message)
+        return None
+
+def safe_execute_sql(query, params=None, fetch_one=False):
+    """Функція для безпечного виконання SQL-запитів"""
+    try:
+        # Перевіряємо наявність бази даних перед кожним запитом
+        if not ensure_database_exists():
+            raise Exception("База даних не доступна")
+
         conn = sqlite3.connect(DATABASE_PATH)
-        c = conn.cursor()
+        cursor = conn.cursor()
         
-        # Створюємо всі необхідні таблиці
+        print(f"Executing query: {query}")
+        print(f"Parameters: {params}")
+        
+        if params is not None:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+
+        if fetch_one:
+            result = cursor.fetchone()
+        else:
+            result = cursor.fetchall()
+            
+        print(f"Query result: {result}")
+        
+        conn.commit()
+        conn.close()
+        return result
+    except Exception as e:
+        error_message = f"Database error: {str(e)}"
+        print(error_message)
+        return None
+
+def init_db():
+    """Функція для ініціалізації бази даних"""
+    if not ensure_database_exists():
+        return
+
+    conn = safe_db_connect()
+    if not conn:
+        return
+
+    try:
+        c = conn.cursor()
+
+        # Таблиця користувачів
         c.execute('''CREATE TABLE IF NOT EXISTS users
             (user_id INTEGER PRIMARY KEY,
              username TEXT,
@@ -140,7 +124,7 @@ def ensure_database_exists():
              temp_data TEXT,
              FOREIGN KEY (referrer_id) REFERENCES users(user_id))''')
 
-         # Таблиця транзакцій
+        # Таблиця транзакцій
         c.execute('''CREATE TABLE IF NOT EXISTS transactions
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              user_id INTEGER,
@@ -191,216 +175,13 @@ def ensure_database_exists():
 
 
         conn.commit()
+        print("✅ База даних успішно ініціалізована")
+        print(f"📁 Шлях до бази даних: {DATABASE_PATH}")
+    except Exception as e:
+        print(f"❌ Помилка ініціалізації БД: {str(e)}")
+        bot.send_message(ADMIN_ID, f"❌ Помилка ініціалізації БД: {str(e)}")
+    finally:
         conn.close()
-
-        # Робимо бекап нової бази
-        backup_database()
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ Помилка при створенні бази даних: {str(e)}")
-        return False
-
-def schedule_backup():
-    """Функція для періодичного бекапу"""
-    while True:
-        try:
-            backup_database()
-            time.sleep(BACKUP_INTERVAL)
-        except Exception as e:
-            logger.error(f"❌ Помилка планувальника бекапу: {str(e)}")
-            time.sleep(60)
-
-# Запускаємо періодичний бекап в окремому потоці
-try:
-    backup_thread = Thread(target=schedule_backup, daemon=True)
-    backup_thread.start()
-    logger.info("✅ Запущено планувальник бекапу")
-except Exception as e:
-    logger.error(f"❌ Помилка запуску планувальника: {str(e)}")
-
-# Клас для станів користувача
-class UserState:
-    none = 'NONE'
-    waiting_for_withdrawal = 'WAITING_FOR_WITHDRAWAL'
-    waiting_for_broadcast = 'WAITING_FOR_BROADCAST'
-    waiting_for_channel_add = 'WAITING_FOR_CHANNEL_ADD'
-    waiting_for_balance_change = 'WAITING_FOR_BALANCE_CHANGE'
-    waiting_promo = 'waiting_promo'
-    waiting_admin_promo = 'waiting_admin_promo'
-    waiting_admin_reward = 'waiting_admin_reward'
-    waiting_admin_activations = 'waiting_admin_activations'
-
-
-def safe_db_connect():
-    """Функція для безпечного підключення до бази даних"""
-    try:
-        # Спочатку переконуємося, що база даних існує
-        if not ensure_database_exists():
-            raise Exception("Не вдалося забезпечити існування бази даних")
-            
-        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
-        return conn
-    except sqlite3.Error as e:
-        error_message = f"❌ Помилка підключення до БД: {str(e)}"
-        print(error_message)
-        bot.send_message(ADMIN_ID, error_message)
-        return None
-
-def safe_execute_sql(query, params=None, fetch_one=False):
-    """Функція для безпечного виконання SQL-запитів"""
-    try:
-        # Перевіряємо наявність бази даних перед кожним запитом
-        if not ensure_database_exists():
-            raise Exception("База даних не доступна")
-
-        conn = sqlite3.connect(DATABASE_PATH)
-        cursor = conn.cursor()
-        
-        if params is not None:
-            cursor.execute(query, params)
-        else:
-            cursor.execute(query)
-
-        if fetch_one:
-            result = cursor.fetchone()
-        else:
-            result = cursor.fetchall()
-            
-        conn.commit()
-        conn.close()
-        return result
-    except Exception as e:
-        logger.error(f"Database error: {str(e)}")
-        return None
-
-def init_db():
-    """Функція для ініціалізації бази даних"""
-    if not ensure_database_exists():
-        logger.error("❌ Failed to ensure database exists")
-        return False
-        
-    try:
-        # Використовуємо контекстний менеджер для автоматичного закриття з'єднання
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            c = conn.cursor()
-            
-            # Створюємо таблиці в правильному порядку (спочатку основні, потім залежні)
-            
-            # 1. Users table (основна таблиця)
-            c.execute('''CREATE TABLE IF NOT EXISTS users
-                (user_id INTEGER PRIMARY KEY,
-                 username TEXT,
-                 balance REAL DEFAULT 0,
-                 total_earnings REAL DEFAULT 0,
-                 referrer_id INTEGER,
-                 join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 state TEXT DEFAULT 'none',
-                 temp_data TEXT)''')
-                 
-            # 2. Channels table (незалежна таблиця)
-            c.execute('''CREATE TABLE IF NOT EXISTS channels
-                (channel_id TEXT PRIMARY KEY,
-                 channel_name TEXT,
-                 channel_link TEXT,
-                 added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 is_required INTEGER DEFAULT 1)''')
-                 
-            # 3. Transactions table (залежить від users)
-            c.execute('''CREATE TABLE IF NOT EXISTS transactions
-                (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 user_id INTEGER,
-                 amount REAL,
-                 type TEXT,
-                 status TEXT,
-                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 FOREIGN KEY (user_id) REFERENCES users(user_id))''')
-                 
-            # 4. Promo codes table (незалежна таблиця)
-            c.execute('''CREATE TABLE IF NOT EXISTS promo_codes
-                (code TEXT PRIMARY KEY,
-                 reward REAL,
-                 max_activations INTEGER,
-                 current_activations INTEGER DEFAULT 0,
-                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-                 
-            # 5. Used promo codes table (залежить від users та promo_codes)
-            c.execute('''CREATE TABLE IF NOT EXISTS used_promo_codes
-                (user_id INTEGER,
-                 promo_code TEXT,
-                 activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 PRIMARY KEY (user_id, promo_code),
-                 FOREIGN KEY (user_id) REFERENCES users(user_id),
-                 FOREIGN KEY (promo_code) REFERENCES promo_codes(code))''')
-                 
-            # 6. Temporary referrals table (незалежна таблиця)
-            c.execute('''CREATE TABLE IF NOT EXISTS temp_referrals
-                (user_id INTEGER PRIMARY KEY,
-                 referral_code TEXT,
-                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-                 
-            # 7. Referral history table (залежить від users)
-            c.execute('''CREATE TABLE IF NOT EXISTS referral_history
-                (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 referrer_id INTEGER NOT NULL,
-                 referral_user_id INTEGER NOT NULL,
-                 reward_amount REAL NOT NULL,
-                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                 FOREIGN KEY (referrer_id) REFERENCES users(user_id),
-                 FOREIGN KEY (referral_user_id) REFERENCES users(user_id))''')
-
-            # Перевіряємо створення таблиць
-            c.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = c.fetchall()
-            logger.info(f"✅ Created tables: {[table[0] for table in tables]}")
-            
-            # Додаємо базовий канал тільки якщо таблиця channels порожня
-            c.execute("SELECT COUNT(*) FROM channels")
-            if c.fetchone()[0] == 0:
-                c.execute('''
-                    INSERT INTO channels (channel_id, channel_name, channel_link, is_required)
-                    VALUES (?, ?, ?, ?)
-                ''', ('-1002157115077', 'CryptoWave', 'https://t.me/CryptoWaveee', 1))
-                logger.info("✅ Added default channel")
-                
-            conn.commit()
-            logger.info("✅ Database initialized successfully")
-            return True
-            
-    except sqlite3.Error as e:
-        logger.error(f"❌ Database initialization error: {str(e)}")
-        return False
-    except Exception as e:
-        logger.error(f"❌ Unexpected error during database initialization: {str(e)}")
-        return False
-
-def check_and_repair_db():
-    """Функція для перевірки та відновлення структури бази даних"""
-    try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            c = conn.cursor()
-            
-            # Перевіряємо наявність всіх таблиць
-            required_tables = ['users', 'channels', 'transactions', 'promo_codes', 
-                             'used_promo_codes', 'temp_referrals', 'referral_history']
-            
-            c.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            existing_tables = [table[0] for table in c.fetchall()]
-            
-            missing_tables = set(required_tables) - set(existing_tables)
-            
-            if missing_tables:
-                logger.warning(f"❗ Missing tables detected: {missing_tables}")
-                # Викликаємо init_db() для створення відсутніх таблиць
-                return init_db()
-            
-            logger.info("✅ All required tables exist")
-            return True
-            
-    except sqlite3.Error as e:
-        logger.error(f"❌ Database check error: {str(e)}")
-        return False
 
 # Функція для створення таблиць промокодів
 def create_promo_codes_table():
@@ -509,7 +290,6 @@ def start(message):
     username = message.from_user.username or "Anonymous"
 
     # Додаємо цей блок коду для збереження реферального коду
-    referral_code = None
     if len(message.text.split()) > 1:
         referral_code = message.text.split()[1]
         safe_execute_sql(
@@ -1863,46 +1643,12 @@ def check_table_structure():
     except Exception as e:
         print(f"Помилка при перевірці структури таблиці: {str(e)}")
 
-# Перед bot.polling()
-def setup():
-    try:
-        # Створюємо з'єднання
-        conn = sqlite3.connect(DATABASE_PATH)
-        c = conn.cursor()
-        
-        # Створюємо всі необхідні таблиці
-        c.execute('''CREATE TABLE IF NOT EXISTS users
-            (user_id INTEGER PRIMARY KEY,
-             username TEXT,
-             balance REAL DEFAULT 0,
-             total_earnings REAL DEFAULT 0,
-             referrer_id INTEGER,
-             join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             state TEXT DEFAULT 'none',
-             temp_data TEXT)''')
-             
-        c.execute('''CREATE TABLE IF NOT EXISTS channels
-            (channel_id TEXT PRIMARY KEY,
-             channel_name TEXT,
-             channel_link TEXT,
-             added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             is_required INTEGER DEFAULT 1)''')
-             
-        conn.commit()
-        logger.info("✅ Database tables created successfully")
-        
-    except Exception as e:
-        logger.error(f"❌ Error creating tables: {str(e)}")
-    finally:
-        conn.close()
 
 # Запуск бота
 if __name__ == "__main__":
     try:
         ensure_database_exists()
         init_db()  # Викликаємо функцію для створення всіх таблиць
-        setup()
         
         # Додавання тестового каналу
         safe_execute_sql('''
