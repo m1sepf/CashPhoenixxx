@@ -17,27 +17,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_DIR = os.path.join(BASE_DIR, 'database')
 DATABASE_PATH = os.path.join(DATABASE_DIR, 'bot_database.db')
 
-def ensure_database_exists():
-    """Функція для перевірки та створення необхідних директорій та бази даних"""
-    try:
-        # Створюємо директорію для бази даних, якщо вона не існує
-        if not os.path.exists(DATABASE_DIR):
-            os.makedirs(DATABASE_DIR)
-            print(f"✅ Створено директорію бази даних: {DATABASE_DIR}")
-
-        # Створюємо базу даних, якщо вона не існує
-        if not os.path.exists(DATABASE_PATH):
-            conn = sqlite3.connect(DATABASE_PATH)
-            conn.close()
-            print(f"✅ Створено файл бази даних: {DATABASE_PATH}")
-            
-            # Важливо: одразу ініціалізувати таблиці після створення бази
-            init_db()
-        return True
-    except Exception as e:
-        print(f"❌ Помилка при створенні бази даних: {str(e)}")
-        return False
-
 
 # Клас для станів користувача
 class UserState:
@@ -179,6 +158,27 @@ def init_db():
         bot.send_message(ADMIN_ID, f"❌ Помилка при створенні таблиць: {str(e)}")
     finally:
         conn.close()
+
+def ensure_database_exists():
+    """Функція для перевірки та створення необхідних директорій та бази даних"""
+    try:
+        # Створюємо директорію для бази даних, якщо вона не існує
+        if not os.path.exists(DATABASE_DIR):
+            os.makedirs(DATABASE_DIR)
+            print(f"✅ Створено директорію бази даних: {DATABASE_DIR}")
+
+        # Створюємо базу даних, якщо вона не існує
+        if not os.path.exists(DATABASE_PATH):
+            conn = sqlite3.connect(DATABASE_PATH)
+            conn.close()
+            print(f"✅ Створено файл бази даних: {DATABASE_PATH}")
+            
+            # Важливо: одразу ініціалізувати таблиці після створення бази
+            init_db()
+        return True
+    except Exception as e:
+        print(f"❌ Помилка при створенні бази даних: {str(e)}")
+        return False
 
 # Функція для створення таблиць промокодів
 def create_promo_codes_table():
