@@ -106,8 +106,6 @@ def init_db():
         c = conn.cursor()
         
         # Створюємо всі таблиці в правильному порядку
-        
-        # 1. Таблиця користувачів (основна таблиця)
         c.execute('''CREATE TABLE IF NOT EXISTS users
             (user_id INTEGER PRIMARY KEY,
              username TEXT,
@@ -119,7 +117,6 @@ def init_db():
              state TEXT DEFAULT 'none',
              temp_data TEXT)''')
 
-        # 2. Таблиця каналів (важлива для роботи бота)
         c.execute('''CREATE TABLE IF NOT EXISTS channels
             (channel_id TEXT PRIMARY KEY,
              channel_name TEXT,
@@ -127,7 +124,6 @@ def init_db():
              added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              is_required INTEGER DEFAULT 1)''')
 
-        # 3. Таблиця транзакцій
         c.execute('''CREATE TABLE IF NOT EXISTS transactions
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              user_id INTEGER,
@@ -137,7 +133,6 @@ def init_db():
              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              FOREIGN KEY (user_id) REFERENCES users(user_id))''')
 
-        # 4. Таблиця промокодів
         c.execute('''CREATE TABLE IF NOT EXISTS promo_codes
             (code TEXT PRIMARY KEY,
              reward REAL,
@@ -145,7 +140,6 @@ def init_db():
              current_activations INTEGER DEFAULT 0,
              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-        # 5. Таблиця використаних промокодів
         c.execute('''CREATE TABLE IF NOT EXISTS used_promo_codes
             (user_id INTEGER,
              promo_code TEXT,
@@ -154,14 +148,12 @@ def init_db():
              FOREIGN KEY (user_id) REFERENCES users(user_id),
              FOREIGN KEY (promo_code) REFERENCES promo_codes(code))''')
 
-        # 6. Таблиця тимчасових реферальних кодів
         c.execute('''CREATE TABLE IF NOT EXISTS temp_referrals
             (user_id INTEGER PRIMARY KEY,
              referral_code TEXT,
              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              FOREIGN KEY (user_id) REFERENCES users(user_id))''')
 
-        # 7. Таблиця історії рефералів
         c.execute('''CREATE TABLE IF NOT EXISTS referral_history
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              referrer_id INTEGER NOT NULL,
