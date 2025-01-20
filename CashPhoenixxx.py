@@ -25,13 +25,14 @@ def ensure_database_exists():
             os.makedirs(DATABASE_DIR)
             print(f"✅ Створено директорію бази даних: {DATABASE_DIR}")
 
-        # Перевіряємо чи існує файл бази даних
+        # Створюємо базу даних, якщо вона не існує
         if not os.path.exists(DATABASE_PATH):
-            # Створюємо з'єднання, що автоматично створить файл бази даних
             conn = sqlite3.connect(DATABASE_PATH)
             conn.close()
             print(f"✅ Створено файл бази даних: {DATABASE_PATH}")
-            return True
+            
+            # Важливо: одразу ініціалізувати таблиці після створення бази
+            init_db()
         return True
     except Exception as e:
         print(f"❌ Помилка при створенні бази даних: {str(e)}")
@@ -101,17 +102,13 @@ def safe_execute_sql(query, params=None, fetch_one=False):
 
 def init_db():
     """Функція для ініціалізації бази даних"""
-    if not ensure_database_exists():
-        return
-
-    conn = safe_db_connect()
-    if not conn:
-        return
-
+    conn = sqlite3.connect(DATABASE_PATH)
     try:
         c = conn.cursor()
-
-        # Таблиця користувачів
+        
+        # Створюємо всі таблиці в правильному порядку
+        
+        # 1. Таблиця користувачів (основна таблиця)
         c.execute('''CREATE TABLE IF NOT EXISTS users
             (user_id INTEGER PRIMARY KEY,
              username TEXT,
@@ -121,10 +118,17 @@ def init_db():
              join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              state TEXT DEFAULT 'none',
-             temp_data TEXT,
-             FOREIGN KEY (referrer_id) REFERENCES users(user_id))''')
+             temp_data TEXT)''')
 
-        # Таблиця транзакцій
+        # 2. Таблиця каналів (важлива для роботи бота)
+        c.execute('''CREATE TABLE IF NOT EXISTS channels
+            (channel_id TEXT PRIMARY KEY,
+             channel_name TEXT,
+             channel_link TEXT,
+             added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             is_required INTEGER DEFAULT 1)''')
+
+        # 3. Таблиця транзакцій
         c.execute('''CREATE TABLE IF NOT EXISTS transactions
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              user_id INTEGER,
@@ -134,15 +138,7 @@ def init_db():
              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              FOREIGN KEY (user_id) REFERENCES users(user_id))''')
 
-        # Таблиця каналів
-        c.execute('''CREATE TABLE IF NOT EXISTS channels
-            (channel_id TEXT PRIMARY KEY,
-             channel_name TEXT,
-             channel_link TEXT,
-             added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             is_required INTEGER DEFAULT 1)''')
-
-        # Таблиця промокодів
+        # 4. Таблиця промокодів
         c.execute('''CREATE TABLE IF NOT EXISTS promo_codes
             (code TEXT PRIMARY KEY,
              reward REAL,
@@ -150,36 +146,37 @@ def init_db():
              current_activations INTEGER DEFAULT 0,
              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-        # Таблиця використаних промокодів
+        # 5. Таблиця використаних промокодів
         c.execute('''CREATE TABLE IF NOT EXISTS used_promo_codes
             (user_id INTEGER,
              promo_code TEXT,
              activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              PRIMARY KEY (user_id, promo_code),
-             FOREIGN KEY (user_id) REFERENCES users (user_id),
-             FOREIGN KEY (promo_code) REFERENCES promo_codes (code))''')
+             FOREIGN KEY (user_id) REFERENCES users(user_id),
+             FOREIGN KEY (promo_code) REFERENCES promo_codes(code))''')
 
-        # Таблиця тимчасових реферальних кодів
+        # 6. Таблиця тимчасових реферальних кодів
         c.execute('''CREATE TABLE IF NOT EXISTS temp_referrals
             (user_id INTEGER PRIMARY KEY,
              referral_code TEXT,
-             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
 
-        #Таблиця відстеження усіх рефералів
-        c.execute('''CREATE TABLE IF NOT EXISTS referral_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            referrer_id INTEGER NOT NULL,
-            referral_user_id INTEGER NOT NULL,
-            reward_amount REAL NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-
+        # 7. Таблиця історії рефералів
+        c.execute('''CREATE TABLE IF NOT EXISTS referral_history
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             referrer_id INTEGER NOT NULL,
+             referral_user_id INTEGER NOT NULL,
+             reward_amount REAL NOT NULL,
+             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+             FOREIGN KEY (referrer_id) REFERENCES users(user_id),
+             FOREIGN KEY (referral_user_id) REFERENCES users(user_id))''')
 
         conn.commit()
-        print("✅ База даних успішно ініціалізована")
-        print(f"📁 Шлях до бази даних: {DATABASE_PATH}")
+        print("✅ Всі таблиці успішно створені")
     except Exception as e:
-        print(f"❌ Помилка ініціалізації БД: {str(e)}")
-        bot.send_message(ADMIN_ID, f"❌ Помилка ініціалізації БД: {str(e)}")
+        print(f"❌ Помилка при створенні таблиць: {str(e)}")
+        bot.send_message(ADMIN_ID, f"❌ Помилка при створенні таблиць: {str(e)}")
     finally:
         conn.close()
 
@@ -196,33 +193,45 @@ def create_promo_codes_table():
     ''')
 
 def add_required_channel(channel_id, channel_name, channel_link):
+    """Функція для додавання обов'язкового каналу"""
     try:
-        conn = safe_db_connect()
-        if not conn:
-            return False
-
-        with conn:
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO channels (channel_id, channel_name, channel_link, is_required)
-                VALUES (?, ?, ?, 1)
-            ''', (channel_id, channel_name, channel_link))
+        # Спочатку перевіряємо, чи існує таблиця channels
+        ensure_database_exists()
+        
+        conn = sqlite3.connect(DATABASE_PATH)
+        c = conn.cursor()
+        
+        # Додаємо канал
+        c.execute('''
+            INSERT INTO channels (channel_id, channel_name, channel_link, is_required)
+            VALUES (?, ?, ?, 1)
+        ''', (channel_id, channel_name, channel_link))
+        
+        conn.commit()
+        print(f"✅ Канал {channel_name} успішно додано")
         return True
     except sqlite3.IntegrityError:
-        bot.send_message(ADMIN_ID, "❌ Канал з таким ID вже існує в базі даних.")
+        print(f"❌ Канал {channel_id} вже існує в базі даних")
         return False
     except Exception as e:
-        bot.send_message(ADMIN_ID, f"❌ Помилка додавання каналу: {str(e)}")
+        print(f"❌ Помилка при додаванні каналу: {str(e)}")
         return False
+    finally:
+        conn.close()
 
 
 def check_subscription(user_id):
+    """Функція для перевірки підписки користувача на канали"""
     try:
-        channels = safe_execute_sql('SELECT channel_id FROM channels WHERE is_required = 1')
-        print("Знайдені канали:", channels)
-
+        conn = sqlite3.connect(DATABASE_PATH)
+        c = conn.cursor()
+        
+        # Отримуємо список обов'язкових каналів
+        c.execute('SELECT channel_id FROM channels WHERE is_required = 1')
+        channels = c.fetchall()
+        
         if not channels:
-            print("Немає каналів для перевірки")
+            print("Немає обов'язкових каналів для перевірки")
             return True
 
         for channel in channels:
@@ -235,8 +244,10 @@ def check_subscription(user_id):
                 continue
         return True
     except Exception as e:
-        print(f"Загальна помилка: {str(e)}")
+        print(f"Помилка перевірки підписки: {str(e)}")
         return False
+    finally:
+        conn.close()
 
 def check_users_table(user_id):  # Додаємо параметр user_id
     try:
