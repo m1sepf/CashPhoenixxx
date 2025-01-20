@@ -6,7 +6,7 @@ from telebot.handler_backends import State, StatesGroup
 from telebot.apihelper import ApiException
 
 # Конфігураційні константи
-bot = telebot.TeleBot('7577998733:AAGRrJFPBVlvPBr9U9RczJotS7xkLoJ6OaI')
+bot = telebot.TeleBot('7577998733:AAGUMyrqPIMJitQLEIApQ3Bhj6iFJIbHu6Q')
 ADMIN_ID = 1270564746
 CHANNEL_ID = '@CryptoWaveee'
 REFERRAL_REWARD = 0.5
