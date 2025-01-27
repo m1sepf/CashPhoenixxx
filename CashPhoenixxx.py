@@ -240,7 +240,7 @@ def check_subscription(user_id):
 
 def check_users_table(user_id):  # Додаємо параметр user_id
     try:
-        conn = sqlite3.connect('bot_database.db')
+        conn = sqlite3.connect(DATABASE_PATH)
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(users)")
         columns = cursor.fetchall()
