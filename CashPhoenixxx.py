@@ -1648,7 +1648,6 @@ def check_table_structure():
 if __name__ == "__main__":
     try:
         ensure_database_exists()
-        init_db()  # Викликаємо функцію для створення всіх таблиць
         
         # Додавання тестового каналу
         safe_execute_sql('''
