@@ -69,9 +69,6 @@ def safe_db_connect():
 def safe_execute_sql(query, params=None, fetch_one=False):
     """Функція для безпечного виконання SQL-запитів"""
     try:
-        # Перевіряємо наявність бази даних перед кожним запитом
-        if not ensure_database_exists():
-            raise Exception("База даних не доступна")
 
         conn = sqlite3.connect(DATABASE_PATH)
         cursor = conn.cursor()
