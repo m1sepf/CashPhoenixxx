@@ -102,8 +102,17 @@ def init_db():
     try:
         c = conn.cursor()
         
+        # Видаляємо всі існуючі таблиці для чистої ініціалізації
+        c.execute("DROP TABLE IF EXISTS used_promo_codes")
+        c.execute("DROP TABLE IF EXISTS referral_history")
+        c.execute("DROP TABLE IF EXISTS temp_referrals")
+        c.execute("DROP TABLE IF EXISTS promo_codes")
+        c.execute("DROP TABLE IF EXISTS transactions")
+        c.execute("DROP TABLE IF EXISTS channels")
+        c.execute("DROP TABLE IF EXISTS users")
+
         # Створюємо всі таблиці в правильному порядку
-        c.execute('''CREATE TABLE IF NOT EXISTS users
+        c.execute('''CREATE TABLE users
             (user_id INTEGER PRIMARY KEY,
              username TEXT,
              balance REAL DEFAULT 0,
@@ -114,30 +123,31 @@ def init_db():
              state TEXT DEFAULT 'none',
              temp_data TEXT)''')
 
-        c.execute('''CREATE TABLE IF NOT EXISTS channels
+        c.execute('''CREATE TABLE channels
             (channel_id TEXT PRIMARY KEY,
              channel_name TEXT,
              channel_link TEXT,
              added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              is_required INTEGER DEFAULT 1)''')
 
-        c.execute('''CREATE TABLE IF NOT EXISTS transactions
+        c.execute('''CREATE TABLE transactions
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              user_id INTEGER,
              amount REAL,
              type TEXT,
              status TEXT,
+             ton_wallet TEXT,
              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              FOREIGN KEY (user_id) REFERENCES users(user_id))''')
 
-        c.execute('''CREATE TABLE IF NOT EXISTS promo_codes
+        c.execute('''CREATE TABLE promo_codes
             (code TEXT PRIMARY KEY,
              reward REAL,
              max_activations INTEGER,
              current_activations INTEGER DEFAULT 0,
              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-        c.execute('''CREATE TABLE IF NOT EXISTS used_promo_codes
+        c.execute('''CREATE TABLE used_promo_codes
             (user_id INTEGER,
              promo_code TEXT,
              activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -145,13 +155,13 @@ def init_db():
              FOREIGN KEY (user_id) REFERENCES users(user_id),
              FOREIGN KEY (promo_code) REFERENCES promo_codes(code))''')
 
-        c.execute('''CREATE TABLE IF NOT EXISTS temp_referrals
+        c.execute('''CREATE TABLE temp_referrals
             (user_id INTEGER PRIMARY KEY,
              referral_code TEXT,
              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
              FOREIGN KEY (user_id) REFERENCES users(user_id))''')
 
-        c.execute('''CREATE TABLE IF NOT EXISTS referral_history
+        c.execute('''CREATE TABLE referral_history
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              referrer_id INTEGER NOT NULL,
              referral_user_id INTEGER NOT NULL,
