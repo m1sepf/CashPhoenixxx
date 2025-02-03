@@ -16,15 +16,10 @@ def ensure_database_exists():
     """Функція для перевірки та створення необхідних директорій та бази даних"""
     try:
         if os.path.isfile('bot_database.db'):
-            print('Database exist')
-            conn.close()
+            print('✅ База даних існує')
         # Створюємо базу даних, якщо вона не існує
-        if not os.path.isfile('bot_database.db'):
-            conn = sqlite3.connect('bot_database.db')
-            conn.close()
-            print(f"✅ Створено файл бази даних: {'bot_database.db'}")
-            
-            # Важливо: одразу ініціалізувати таблиці після створення бази
+        else:
+            # If db not exist init database
             init_db()
         return True
     except Exception as e:
@@ -91,89 +86,88 @@ def safe_execute_sql(query, params=None, fetch_one=False):
 
 def init_db():
     """Функція для ініціалізації бази даних"""
-    if os.path.exists('bot_database.db'):
-        print("Database already exists")
+    if os.path.isfile('bot_database.db'):
+        print("Database already exists from init function")
     else:
-        print('Database non existent')
-    conn = sqlite3.connect('bot_database.db')
-    try:
-        c = conn.cursor()
-        
-        # Видаляємо всі існуючі таблиці для чистої ініціалізації
-        c.execute("DROP TABLE IF EXISTS used_promo_codes")
-        c.execute("DROP TABLE IF EXISTS referral_history")
-        c.execute("DROP TABLE IF EXISTS temp_referrals")
-        c.execute("DROP TABLE IF EXISTS promo_codes")
-        c.execute("DROP TABLE IF EXISTS transactions")
-        c.execute("DROP TABLE IF EXISTS channels")
-        c.execute("DROP TABLE IF EXISTS users")
+        print('❌База даних не існує. Ініціалізація...')
+        conn = sqlite3.connect('bot_database.db')
+        try:
+            c = conn.cursor()
+            # Видаляємо всі існуючі таблиці для чистої ініціалізації
+            c.execute("DROP TABLE IF EXISTS used_promo_codes")
+            c.execute("DROP TABLE IF EXISTS referral_history")
+            c.execute("DROP TABLE IF EXISTS temp_referrals")
+            c.execute("DROP TABLE IF EXISTS promo_codes")
+            c.execute("DROP TABLE IF EXISTS transactions")
+            c.execute("DROP TABLE IF EXISTS channels")
+            c.execute("DROP TABLE IF EXISTS users")
 
-        # Створюємо всі таблиці в правильному порядку
-        c.execute('''CREATE TABLE users
-            (user_id INTEGER PRIMARY KEY,
-             username TEXT,
-             balance REAL DEFAULT 0,
-             total_earnings REAL DEFAULT 0,
-             referrer_id INTEGER,
-             join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             state TEXT DEFAULT 'none',
-             temp_data TEXT)''')
+            # Створюємо всі таблиці в правильному порядку
+            c.execute('''CREATE TABLE users
+                (user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                balance REAL DEFAULT 0,
+                total_earnings REAL DEFAULT 0,
+                referrer_id INTEGER,
+                join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                state TEXT DEFAULT 'none',
+                temp_data TEXT)''')
 
-        c.execute('''CREATE TABLE channels
-            (channel_id TEXT PRIMARY KEY,
-             channel_name TEXT,
-             channel_link TEXT,
-             added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             is_required INTEGER DEFAULT 1)''')
+            c.execute('''CREATE TABLE channels
+                (channel_id TEXT PRIMARY KEY,
+                channel_name TEXT,
+                channel_link TEXT,
+                added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_required INTEGER DEFAULT 1)''')
 
-        c.execute('''CREATE TABLE transactions
-            (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             user_id INTEGER,
-             amount REAL,
-             type TEXT,
-             status TEXT,
-             ton_wallet TEXT,
-             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
+            c.execute('''CREATE TABLE transactions
+                (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                amount REAL,
+                type TEXT,
+                status TEXT,
+                ton_wallet TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id))''')
 
-        c.execute('''CREATE TABLE promo_codes
-            (code TEXT PRIMARY KEY,
-             reward REAL,
-             max_activations INTEGER,
-             current_activations INTEGER DEFAULT 0,
-             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+            c.execute('''CREATE TABLE promo_codes
+                (code TEXT PRIMARY KEY,
+                reward REAL,
+                max_activations INTEGER,
+                current_activations INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-        c.execute('''CREATE TABLE used_promo_codes
-            (user_id INTEGER,
-             promo_code TEXT,
-             activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             PRIMARY KEY (user_id, promo_code),
-             FOREIGN KEY (user_id) REFERENCES users(user_id),
-             FOREIGN KEY (promo_code) REFERENCES promo_codes(code))''')
+            c.execute('''CREATE TABLE used_promo_codes
+                (user_id INTEGER,
+                promo_code TEXT,
+                activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, promo_code),
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (promo_code) REFERENCES promo_codes(code))''')
 
-        c.execute('''CREATE TABLE temp_referrals
-            (user_id INTEGER PRIMARY KEY,
-             referral_code TEXT,
-             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
+            c.execute('''CREATE TABLE temp_referrals
+                (user_id INTEGER PRIMARY KEY,
+                referral_code TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id))''')
 
-        c.execute('''CREATE TABLE referral_history
-            (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             referrer_id INTEGER NOT NULL,
-             referral_user_id INTEGER NOT NULL,
-             reward_amount REAL NOT NULL,
-             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             FOREIGN KEY (referrer_id) REFERENCES users(user_id),
-             FOREIGN KEY (referral_user_id) REFERENCES users(user_id))''')
+            c.execute('''CREATE TABLE referral_history
+                (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                referrer_id INTEGER NOT NULL,
+                referral_user_id INTEGER NOT NULL,
+                reward_amount REAL NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (referrer_id) REFERENCES users(user_id),
+                FOREIGN KEY (referral_user_id) REFERENCES users(user_id))''')
 
-        conn.commit()
-        print("✅ Всі таблиці успішно створені")
-    except Exception as e:
-        print(f"❌ Помилка при створенні таблиць: {str(e)}")
-        bot.send_message(ADMIN_ID, f"❌ Помилка при створенні таблиць: {str(e)}")
-    finally:
-        conn.close()
+            conn.commit()
+            print("✅ Всі таблиці успішно створені")
+        except Exception as e:
+            print(f"❌ Помилка при створенні таблиць: {str(e)}")
+            bot.send_message(ADMIN_ID, f"❌ Помилка при створенні таблиць: {str(e)}")
+        finally:
+            conn.close()
 
 
 # Функція для створення таблиць промокодів
