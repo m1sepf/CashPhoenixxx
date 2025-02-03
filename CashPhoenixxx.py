@@ -1698,11 +1698,17 @@ def spin_slots(message):
             f"Ваш поточний баланс: {get_balance(user_id)}$", 
             reply_markup=markup)
 
+@bot.message_handler(func=lambda message: message.text == "🎰 Крутити")
+def handle_spin(message):
+    result = slots_game(message, bot)
+    bot.reply_to(message, result)
+
 @bot.message_handler(func=lambda message: message.text == "❌ Вийти")
 def exit_slots(message):
     # Повертаємо стандартну клавіатуру
     markup = types.ReplyKeyboardRemove()
     bot.send_message(message.chat.id, "Ви вийшли з гри.", reply_markup=markup)
+
 
 # Функція для безпечного виконання SQL-запитів
 def safe_execute_sql(query, params=None, fetch_one=False):
