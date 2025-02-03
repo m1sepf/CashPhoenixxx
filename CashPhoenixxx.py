@@ -12,24 +12,17 @@ CHANNEL_ID = '@CryptoWaveee'
 REFERRAL_REWARD = 0.5
 MIN_WITHDRAWAL = 10.0
 
-# Налаштування шляхів для бази даних
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_DIR = os.path.join(BASE_DIR, 'database')
-DATABASE_PATH = os.path.join(DATABASE_DIR, 'bot_database.db')
-
 def ensure_database_exists():
     """Функція для перевірки та створення необхідних директорій та бази даних"""
     try:
-        # Створюємо директорію для бази даних, якщо вона не існує
-        if not os.path.exists(DATABASE_DIR):
-            os.makedirs(DATABASE_DIR)
-            print(f"✅ Створено директорію бази даних: {DATABASE_DIR}")
-
-        # Створюємо базу даних, якщо вона не існує
-        if not os.path.exists(DATABASE_PATH):
-            conn = sqlite3.connect(DATABASE_PATH)
+        if os.path.isfile('bot_database.db'):
+            print('Database exist')
             conn.close()
-            print(f"✅ Створено файл бази даних: {DATABASE_PATH}")
+        # Створюємо базу даних, якщо вона не існує
+        if not os.path.isfile('bot_database.db'):
+            conn = sqlite3.connect('bot_database.db')
+            conn.close()
+            print(f"✅ Створено файл бази даних: {'bot_database.db'}")
             
             # Важливо: одразу ініціалізувати таблиці після створення бази
             init_db()
@@ -58,7 +51,7 @@ def safe_db_connect():
         if not ensure_database_exists():
             raise Exception("Не вдалося забезпечити існування бази даних")
             
-        conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+        conn = sqlite3.connect('bot_database.db', check_same_thread=False)
         return conn
     except sqlite3.Error as e:
         error_message = f"❌ Помилка підключення до БД: {str(e)}"
@@ -70,7 +63,7 @@ def safe_execute_sql(query, params=None, fetch_one=False):
     """Функція для безпечного виконання SQL-запитів"""
     try:
 
-        conn = sqlite3.connect(DATABASE_PATH)
+        conn = sqlite3.connect('bot_database.db')
         cursor = conn.cursor()
         
         print(f"Executing query: {query}")
@@ -98,7 +91,11 @@ def safe_execute_sql(query, params=None, fetch_one=False):
 
 def init_db():
     """Функція для ініціалізації бази даних"""
-    conn = sqlite3.connect(DATABASE_PATH)
+    if os.path.exists('bot_database.db'):
+        print("Database already exists")
+    else:
+        print('Database non existent')
+    conn = sqlite3.connect('bot_database.db')
     try:
         c = conn.cursor()
         
@@ -197,7 +194,7 @@ def add_required_channel(channel_id, channel_name, channel_link):
         # Спочатку перевіряємо, чи існує таблиця channels
         ensure_database_exists()
         
-        conn = sqlite3.connect(DATABASE_PATH)
+        conn = sqlite3.connect('bot_database.db')
         c = conn.cursor()
         
         # Додаємо канал
@@ -222,7 +219,7 @@ def add_required_channel(channel_id, channel_name, channel_link):
 def check_subscription(user_id):
     """Функція для перевірки підписки користувача на канали"""
     try:
-        conn = sqlite3.connect(DATABASE_PATH)
+        conn = sqlite3.connect('bot_database.db')
         c = conn.cursor()
         
         # Отримуємо список обов'язкових каналів
@@ -250,7 +247,7 @@ def check_subscription(user_id):
 
 def check_users_table(user_id):  # Додаємо параметр user_id
     try:
-        conn = sqlite3.connect(DATABASE_PATH)
+        conn = sqlite3.connect('bot_database.db')
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(users)")
         columns = cursor.fetchall()
