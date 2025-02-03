@@ -271,7 +271,8 @@ def create_main_keyboard(user_id):
         types.KeyboardButton('📊 Моя статистика'),
         types.KeyboardButton('🍀 Промокод'),
         types.KeyboardButton('🏆 Таблица лидеров'),
-        types.KeyboardButton('🛠️Тех.Поддержка')
+        types.KeyboardButton('🛠️Тех.Поддержка'),
+        types.KeyboardButton('🎰 Слот-машина')
     ]
     keyboard.add(*buttons)
 
@@ -616,7 +617,8 @@ def handle_text(message):
         '📊 Моя статистика': show_user_statistics,
         '🍀 Промокод': handle_promo_code,
         '🏆 Таблица лидеров': show_leaders_board,
-        '🛠️Тех.Поддержка': tech_support
+        '🛠️Тех.Поддержка': tech_support,
+        '🎰 Слот-машина': slots_game
     }
     if text in user_commands:
         user_commands[text](message)
@@ -1188,7 +1190,8 @@ def back_to_main_menu(message):
         '📊 Моя статистика',
         '🍀 Промокод',
         '🏆 Таблица лидеров',
-        '🛠️Тех.Поддержка'
+        '🛠️Тех.Поддержка',
+        '🎰 Слот-машина'
     ]
 
     # Додаємо кнопки адмін-панелі для адміністратора
