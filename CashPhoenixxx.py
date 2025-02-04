@@ -2,7 +2,6 @@ import telebot
 from telebot import types
 import sqlite3
 import os
-import random
 from telebot.handler_backends import State, StatesGroup
 from telebot.apihelper import ApiException
 
@@ -94,14 +93,6 @@ def init_db():
         conn = sqlite3.connect('bot_database.db')
         try:
             c = conn.cursor()
-            # Видаляємо всі існуючі таблиці для чистої ініціалізації
-            c.execute("DROP TABLE IF EXISTS used_promo_codes")
-            c.execute("DROP TABLE IF EXISTS referral_history")
-            c.execute("DROP TABLE IF EXISTS temp_referrals")
-            c.execute("DROP TABLE IF EXISTS promo_codes")
-            c.execute("DROP TABLE IF EXISTS transactions")
-            c.execute("DROP TABLE IF EXISTS channels")
-            c.execute("DROP TABLE IF EXISTS users")
 
             # Створюємо всі таблиці в правильному порядку
             c.execute('''CREATE TABLE users
@@ -271,8 +262,7 @@ def create_main_keyboard(user_id):
         types.KeyboardButton('📊 Моя статистика'),
         types.KeyboardButton('🍀 Промокод'),
         types.KeyboardButton('🏆 Таблица лидеров'),
-        types.KeyboardButton('🛠️Тех.Поддержка'),
-        types.KeyboardButton('🎰 Слот-машина')
+        types.KeyboardButton('🛠️Тех.Поддержка')
     ]
     keyboard.add(*buttons)
 
@@ -617,8 +607,7 @@ def handle_text(message):
         '📊 Моя статистика': show_user_statistics,
         '🍀 Промокод': handle_promo_code,
         '🏆 Таблица лидеров': show_leaders_board,
-        '🛠️Тех.Поддержка': tech_support,
-        '🎰 Слот-машина': slots_game
+        '🛠️Тех.Поддержка': tech_support
     }
     if text in user_commands:
         user_commands[text](message)
@@ -1190,8 +1179,7 @@ def back_to_main_menu(message):
         '📊 Моя статистика',
         '🍀 Промокод',
         '🏆 Таблица лидеров',
-        '🛠️Тех.Поддержка',
-        '🎰 Слот-машина'
+        '🛠️Тех.Поддержка'
     ]
 
     # Додаємо кнопки адмін-панелі для адміністратора
@@ -1610,106 +1598,6 @@ def handle_user_deletion(message):
     except ValueError:
         bot.send_message(ADMIN_ID, "❌ Невірний формат ID користувача. Спробуйте ще раз.")
 
-def get_balance(user_id):
-    """Отримання балансу користувача з бази даних"""
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else 0
-
-def update_balance(user_id, amount):
-    """Оновлення балансу користувача в базі даних"""
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
-    
-    # Додаємо запис про транзакцію
-    cursor.execute("""
-        INSERT INTO transactions (user_id, amount, type, status) 
-        VALUES (?, ?, ?, ?)
-    """, (user_id, amount, 'slots_game', 'completed'))
-    
-    conn.commit()
-    conn.close()
-
-@bot.message_handler(commands=['slots'])
-def slots_game(message):
-    user_id = message.from_user.id
-    
-    # Перевірка балансу
-    balance = get_balance(user_id)
-    if balance < 1:
-        bot.reply_to(message, "Недостатньо коштів для гри. Мінімум 1$ потрібно мати на балансі.")
-        return
-    
-    # Створення клавіатури
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    item1 = types.KeyboardButton("🎰 Крутити")
-    item2 = types.KeyboardButton("❌ Вийти")
-    markup.add(item1, item2)
-    
-    # Надсилання повідомлення з інформацією про гру
-    bot.send_message(message.chat.id, 
-        f"🎲 Слот-машина 🎰\n"
-        f"Вартість однієї спроби: 1$\n"
-        f"Виграш при 3 однакових: 2$\n"
-        f"Ваш поточний баланс: {balance}$\n\n"
-        "Натисніть 'Крутити' або виберіть 'Вийти'", 
-        reply_markup=markup)
-
-@bot.message_handler(func=lambda message: message.text == "🎰 Крутити")
-def spin_slots(message):
-    user_id = message.from_user.id
-    
-    # Перевірка балансу
-    balance = get_balance(user_id)
-    if balance < 1:
-        bot.reply_to(message, "Недостатньо коштів для гри. Мінімум 1$ потрібно мати на балансі.")
-        return
-    
-    # Списування коштів за спробу
-    update_balance(user_id, -1)
-    
-    # Надсилання анімованого слот-машини
-    sent_message = bot.send_dice(message.chat.id, emoji="🎰")
-    
-    # Створення клавіатури
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    item1 = types.KeyboardButton("🎰 Крутити")
-    item2 = types.KeyboardButton("❌ Вийти")
-    markup.add(item1, item2)
-    
-    # Чекаємо поки смайлик заспіниться
-    bot.sleep(3)
-    
-    # Перевірка результату вбудованої анімації
-    if sent_message.dice.value == 6:
-        # Виграш при значенні 6
-        update_balance(user_id, 2)
-        bot.send_message(message.chat.id, 
-            f"🎰 ДЖЕКПОТ! Ви виграли 2$!\n"
-            f"Ваш поточний баланс: {get_balance(user_id)}$", 
-            reply_markup=markup)
-    else:
-        bot.send_message(message.chat.id, 
-            f"🎰 На жаль, не пощастило.\n"
-            f"Ваш поточний баланс: {get_balance(user_id)}$", 
-            reply_markup=markup)
-
-@bot.message_handler(func=lambda message: message.text == "🎰 Крутити")
-def handle_spin(message):
-    result = slots_game(message, bot)
-    bot.reply_to(message, result)
-
-@bot.message_handler(func=lambda message: message.text == "❌ Вийти")
-def exit_slots(message):
-    # Повертаємо стандартну клавіатуру
-    markup = types.ReplyKeyboardRemove()
-    bot.send_message(message.chat.id, "Ви вийшли з гри.", reply_markup=markup)
-
-
 # Функція для безпечного виконання SQL-запитів
 def safe_execute_sql(query, params=None, fetch_one=False):
     try:
@@ -1767,3 +1655,4 @@ if __name__ == "__main__":
         bot.polling(none_stop=True)
     except Exception as e:
         print(f"❌ Помилка запуску бота: {str(e)}")
+
