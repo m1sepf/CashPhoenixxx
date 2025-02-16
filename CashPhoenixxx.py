@@ -2,15 +2,57 @@ import telebot
 from telebot import types
 import sqlite3
 import os
+import random
+import time
+import urllib3
+from datetime import datetime
 from telebot.handler_backends import State, StatesGroup
 from telebot.apihelper import ApiException
+from flask import Flask
+from threading import Thread
+import requests
+
+# Налаштування для уникнення помилок з сертифікатами
+urllib3.disable_warnings()
+telebot.apihelper.RETRY_ON_ERROR = True
 
 # Конфігураційні константи
-bot = telebot.TeleBot('7577998733:AAGUMyrqPIMJitQLEIApQ3Bhj6iFJIbHu6Q')
+bot = telebot.TeleBot('7577998733:AAErlaTvwg7gnBeNSN2w4oJkFpSHWL6_OuA',
+    parse_mode='HTML',
+    threaded=True
+)
 ADMIN_ID = 1270564746
 CHANNEL_ID = '@CryptoWaveee'
 REFERRAL_REWARD = 0.5
 MIN_WITHDRAWAL = 10.0
+
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    """Простий endpoint для перевірки що сервер працює"""
+    return "I'm alive"
+
+def run():
+    app.run(host='0.0.0.0', port=3457)
+
+def keep_alive():
+    """Створює та запускає сервер у окремому потоці"""
+    t = Thread(target=run)
+    t.start()
+
+def ping_bot():
+    while True:
+        try:
+            response = requests.get('https://M1sepf.pythonanywhere.com/', timeout=30)
+            print(f"🔔 Ping status: {response.status_code}")
+        except requests.RequestException as e:
+            print(f"⚠️ Ping failed: {e}")
+        except Exception as e:
+            print(f"⚠️ Unexpected error: {e}")
+        time.sleep(300)
+
 
 def ensure_database_exists():
     """Функція для перевірки та створення необхідних директорій та бази даних"""
@@ -45,7 +87,7 @@ def safe_db_connect():
         # Спочатку переконуємося, що база даних існує
         if not ensure_database_exists():
             raise Exception("Не вдалося забезпечити існування бази даних")
-            
+
         conn = sqlite3.connect('bot_database.db', check_same_thread=False)
         return conn
     except sqlite3.Error as e:
@@ -60,10 +102,10 @@ def safe_execute_sql(query, params=None, fetch_one=False):
 
         conn = sqlite3.connect('bot_database.db')
         cursor = conn.cursor()
-        
+
         print(f"Executing query: {query}")
         print(f"Parameters: {params}")
-        
+
         if params is not None:
             cursor.execute(query, params)
         else:
@@ -73,9 +115,9 @@ def safe_execute_sql(query, params=None, fetch_one=False):
             result = cursor.fetchone()
         else:
             result = cursor.fetchall()
-            
+
         print(f"Query result: {result}")
-        
+
         conn.commit()
         conn.close()
         return result
@@ -179,16 +221,16 @@ def add_required_channel(channel_id, channel_name, channel_link):
     try:
         # Спочатку перевіряємо, чи існує таблиця channels
         ensure_database_exists()
-        
+
         conn = sqlite3.connect('bot_database.db')
         c = conn.cursor()
-        
+
         # Додаємо канал
         c.execute('''
             INSERT INTO channels (channel_id, channel_name, channel_link, is_required)
             VALUES (?, ?, ?, 1)
         ''', (channel_id, channel_name, channel_link))
-        
+
         conn.commit()
         print(f"✅ Канал {channel_name} успішно додано")
         return True
@@ -207,11 +249,11 @@ def check_subscription(user_id):
     try:
         conn = sqlite3.connect('bot_database.db')
         c = conn.cursor()
-        
+
         # Отримуємо список обов'язкових каналів
         c.execute('SELECT channel_id FROM channels WHERE is_required = 1')
         channels = c.fetchall()
-        
+
         if not channels:
             print("Немає обов'язкових каналів для перевірки")
             return True
@@ -260,20 +302,18 @@ def create_main_keyboard(user_id):
         types.KeyboardButton('👥 Реферальная система'),
         types.KeyboardButton('💳 Вывести деньги'),
         types.KeyboardButton('📊 Моя статистика'),
+        types.KeyboardButton('🎮 Мини игры'),
         types.KeyboardButton('🍀 Промокод'),
         types.KeyboardButton('🏆 Таблица лидеров'),
         types.KeyboardButton('🛠️Тех.Поддержка')
     ]
     keyboard.add(*buttons)
-
     if user_id == ADMIN_ID:
         keyboard.add(types.KeyboardButton('🔑 Адмін панель'))
-
     return keyboard
 
 
-
-# Виправлена функція start
+#Команда старт
 @bot.message_handler(commands=['start'])
 def start(message):
     if message.from_user.is_bot:
@@ -282,13 +322,21 @@ def start(message):
     user_id = message.from_user.id
     username = message.from_user.username or "Anonymous"
 
-    # Додаємо цей блок коду для збереження реферального коду
+    # Зберігаємо реферальний код
     if len(message.text.split()) > 1:
         referral_code = message.text.split()[1]
-        safe_execute_sql(
-            "INSERT OR REPLACE INTO temp_referrals (user_id, referral_code) VALUES (?, ?)",
-            (user_id, referral_code)
+        # Перевіряємо чи не був користувач вже рефералом
+        existing_referral = safe_execute_sql(
+            "SELECT id FROM referral_history WHERE referral_user_id = ?",
+            (user_id,),
+            fetch_one=True
         )
+
+        if not existing_referral and referral_code != str(user_id):
+            safe_execute_sql(
+                "INSERT OR REPLACE INTO temp_referrals (user_id, referral_code) VALUES (?, ?)",
+                (user_id, referral_code)
+            )
 
     try:
         # Перевірка підписки
@@ -315,48 +363,62 @@ def start(message):
 
         # Перевіряємо чи користувач вже існує
         existing_user = safe_execute_sql(
-            "SELECT user_id, referrer_id FROM users WHERE user_id = ?", 
-            (user_id,), 
+            "SELECT user_id, referrer_id FROM users WHERE user_id = ?",
+            (user_id,),
             fetch_one=True
         )
-        
-        # Обробка реферальної системи
+
+        # Отримуємо реферальний код
         referral_code = message.text.split()[1] if len(message.text.split()) > 1 else None
-        
-        if not existing_user:
-            if referral_code and referral_code != str(user_id):  # Перевірка що користувач не запросив сам себе
+
+        # Перевіряємо чи не був користувач вже рефералом
+        existing_referral = safe_execute_sql(
+            "SELECT id FROM referral_history WHERE referral_user_id = ?",
+            (user_id,),
+            fetch_one=True
+        )
+
+        if not existing_user and not existing_referral:
+            if referral_code and referral_code != str(user_id):
                 referrer_id = int(referral_code)
-                
+
                 # Перевіряємо чи існує реферер
                 referrer = safe_execute_sql(
-                    "SELECT user_id, balance FROM users WHERE user_id = ?", 
-                    (referrer_id,), 
+                    "SELECT user_id, balance FROM users WHERE user_id = ?",
+                    (referrer_id,),
                     fetch_one=True
                 )
-                
+
                 if referrer:
                     # Додаємо нового користувача з реферером
                     safe_execute_sql(
-                        """INSERT INTO users (user_id, username, referrer_id) 
+                        """INSERT INTO users (user_id, username, referrer_id)
                            VALUES (?, ?, ?)""",
                         (user_id, username, referrer_id)
                     )
-                    
+
                     # Нараховуємо бонус реферу
                     new_balance = referrer[1] + REFERRAL_REWARD
                     safe_execute_sql(
                         "UPDATE users SET balance = ?, total_earnings = total_earnings + ? WHERE user_id = ?",
                         (new_balance, REFERRAL_REWARD, referrer_id)
                     )
-                    
+
                     # Додаємо запис про реферальну транзакцію
                     safe_execute_sql(
                         """INSERT INTO transactions (user_id, amount, type, status)
                            VALUES (?, ?, 'referral_reward', 'completed')""",
                         (referrer_id, REFERRAL_REWARD)
                     )
-                    
-                    # Відправляємо повідомлення реферу про нового реферала
+
+                    # Додаємо запис в історію рефералів
+                    safe_execute_sql(
+                        """INSERT INTO referral_history (referrer_id, referral_user_id, reward_amount)
+                           VALUES (?, ?, ?)""",
+                        (referrer_id, user_id, REFERRAL_REWARD)
+                    )
+
+                    # Відправляємо повідомлення реферу
                     bot.send_message(
                         referrer_id,
                         f"🎉 У вас новый реферал! (@{username})\n"
@@ -378,17 +440,17 @@ def start(message):
 
         # Створюємо реферальне посилання
         ref_link = f"https://t.me/{bot.get_me().username}?start={user_id}"
-        
+
         # Отримуємо статистику рефералів
         referrals_count = safe_execute_sql(
             "SELECT COUNT(*) FROM users WHERE referrer_id = ?",
             (user_id,),
             fetch_one=True
         )[0]
-        
+
         # Отримуємо загальний заробіток з рефералів
         total_ref_earnings = safe_execute_sql(
-            """SELECT COALESCE(SUM(amount), 0) FROM transactions 
+            """SELECT COALESCE(SUM(amount), 0) FROM transactions
                WHERE user_id = ? AND type = 'referral_reward'""",
             (user_id,),
             fetch_one=True
@@ -408,14 +470,13 @@ def start(message):
     except Exception as e:
         error_msg = f"Ошибка в функции start: {str(e)}"
         print(error_msg)
-        print(f"Referral code from message: {message.text.split()[1] if len(message.text.split()) > 1 else None}")
         bot.send_message(ADMIN_ID, f"❌ Ошибка регистрации пользователя: {str(e)}")
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
 def check_subscription_callback(call):
     user_id = call.from_user.id
-    
+
     if check_subscription(user_id):
         try:
             # Отримуємо реферальний код з бази даних або тимчасового зберігання
@@ -424,24 +485,24 @@ def check_subscription_callback(call):
                 (user_id,),
                 fetch_one=True
             )
-            
+
             if referral_data and referral_data[0]:
                 referrer_id = int(referral_data[0])
-                
+
                 # Перевіряємо чи існує реферер
                 referrer = safe_execute_sql(
                     "SELECT user_id, balance FROM users WHERE user_id = ?",
                     (referrer_id,),
                     fetch_one=True
                 )
-                
+
                 # Перевіряємо чи не був цей користувач вже рефералом
                 existing_referral = safe_execute_sql(
                     "SELECT id FROM referral_history WHERE referral_user_id = ?",
                     (user_id,),
                     fetch_one=True
                 )
-                
+
                 if referrer and not existing_referral:
                     # Нараховуємо бонус реферу
                     new_balance = referrer[1] + REFERRAL_REWARD
@@ -449,21 +510,21 @@ def check_subscription_callback(call):
                         "UPDATE users SET balance = ?, total_earnings = total_earnings + ? WHERE user_id = ?",
                         (new_balance, REFERRAL_REWARD, referrer_id)
                     )
-                    
+
                     # Додаємо запис про транзакцію
                     safe_execute_sql(
                         """INSERT INTO transactions (user_id, amount, type, status)
                            VALUES (?, ?, 'referral_reward', 'completed')""",
                         (referrer_id, REFERRAL_REWARD)
                     )
-                    
+
                     # Зберігаємо інформацію про реферала в історії
                     safe_execute_sql(
                         """INSERT INTO referral_history (referrer_id, referral_user_id, reward_amount)
                            VALUES (?, ?, ?)""",
                         (referrer_id, user_id, REFERRAL_REWARD)
                     )
-                    
+
                     # Відправляємо повідомлення реферу
                     username = call.from_user.username or f"User{user_id}"
                     bot.send_message(
@@ -472,27 +533,27 @@ def check_subscription_callback(call):
                         f"💰 Начислено: {REFERRAL_REWARD}$\n"
                         f"💳 Ваш новый баланс: {new_balance}$"
                     )
-            
+
             # Видаляємо тимчасові дані
             safe_execute_sql(
                 "DELETE FROM temp_referrals WHERE user_id = ?",
                 (user_id,)
             )
-            
+
             # Відправляємо привітальне повідомлення
             bot.edit_message_text(
                 "✅ Подписка проверена! Добро пожаловать в бот!",
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id
             )
-            
+
             # Запускаємо звичайний процес старту
             start(call.message)
-            
+
         except Exception as e:
             print(f"Error in check_subscription_callback: {str(e)}")
             bot.send_message(ADMIN_ID, f"❌ Ошибка в обработке подписки: {str(e)}")
-    
+
     else:
         bot.answer_callback_query(
             call.id,
@@ -506,7 +567,7 @@ def debug_referral_system(referrer_id, new_user_id):
     """
     try:
         print(f"Starting referral debug for referrer {referrer_id} and new user {new_user_id}")
-        
+
         # Перевірка балансу рефера до
         balance_before = safe_execute_sql(
             'SELECT balance FROM users WHERE user_id = ?',
@@ -514,7 +575,7 @@ def debug_referral_system(referrer_id, new_user_id):
             fetch_one=True
         )
         print(f"Referrer balance before: {balance_before}")
-        
+
         # Перевірка транзакцій
         transactions = safe_execute_sql(
             'SELECT * FROM transactions WHERE user_id = ? AND type = ? ORDER BY created_at DESC LIMIT 5',
@@ -522,7 +583,7 @@ def debug_referral_system(referrer_id, new_user_id):
             fetch_one=False
         )
         print(f"Recent referral transactions: {transactions}")
-        
+
         # Перевірка зв'язку між користувачами
         referral_link = safe_execute_sql(
             'SELECT referrer_id FROM users WHERE user_id = ?',
@@ -530,7 +591,7 @@ def debug_referral_system(referrer_id, new_user_id):
             fetch_one=True
         )
         print(f"Referral link in database: {referral_link}")
-        
+
         return {
             'balance_before': balance_before,
             'transactions': transactions,
@@ -572,7 +633,7 @@ def handle_text(message):
             (user_id,),
             fetch_one=True
         )
-        
+
         if state and state[0] == 'waiting_for_user_deletion' and user_id == ADMIN_ID:
             try:
                 user_to_delete = int(text)
@@ -605,6 +666,9 @@ def handle_text(message):
         '👥 Реферальная система': show_referral_system,
         '💳 Вывести деньги': start_withdrawal,
         '📊 Моя статистика': show_user_statistics,
+        '🎮 Мини игры': mini_games_menu,
+        '🎰 Слоты': slots_menu,
+        '↩️ Назад': return_to_main,
         '🍀 Промокод': handle_promo_code,
         '🏆 Таблица лидеров': show_leaders_board,
         '🛠️Тех.Поддержка': tech_support
@@ -612,12 +676,12 @@ def handle_text(message):
     if text in user_commands:
         user_commands[text](message)
         return
-            
+
 # Додаємо обробку стану очікування ID користувача для видалення
-@bot.message_handler(func=lambda message: 
-    message.from_user.id == ADMIN_ID and 
-    safe_execute_sql('SELECT state FROM users WHERE user_id = ?', 
-                    (ADMIN_ID,), 
+@bot.message_handler(func=lambda message:
+    message.from_user.id == ADMIN_ID and
+    safe_execute_sql('SELECT state FROM users WHERE user_id = ?',
+                    (ADMIN_ID,),
                     fetch_one=True)[0] == 'waiting_for_user_deletion')
 def process_user_deletion(message):
     handle_user_deletion(message)
@@ -929,7 +993,7 @@ def process_withdrawal_wallet(message, amount):
 def show_admin_panel(message):
     if message.from_user.id != ADMIN_ID:
         return
-        
+
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     admin_buttons = [
         '📊 Статистика',
@@ -944,7 +1008,7 @@ def show_admin_panel(message):
     ]
     for button in admin_buttons:
         keyboard.add(types.KeyboardButton(button))
-    
+
     bot.send_message(message.chat.id, "🔑 Адмін-панель", reply_markup=keyboard)
 
 def show_statistics(message):
@@ -965,7 +1029,6 @@ def show_statistics(message):
             total_users, total_balance, total_referrers, pending_withdrawals = stats[0]
 
             response = (
-                f"📊 Загальна статистика:\n\n"
                 f"📊 Загальна статистика:\n\n"
                 f"👥 Користувачів: {total_users}\n"
                 f"💰 Загальний баланс: {total_balance:.2f}$\n"
@@ -1040,12 +1103,88 @@ def process_broadcast(message):
 # Колбек-обробники
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback_query(call):
+    print("Callback received:", call.data)  # Перевіряємо, чи взагалі приходять запити
+
     if "check_subscription" in call.data:
         check_user_subscription(call)
     elif "approve_withdrawal" in call.data:
         handle_withdrawal_approval(call)
     elif "reject_withdrawal" in call.data:
         handle_withdrawal_rejection(call)
+    elif call.data == "exit_slots":
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.send_message(
+            call.message.chat.id,
+            "👋 Спасибо за игру!",
+            reply_markup=create_main_keyboard(call.from_user.id)
+        )
+    elif call.data == "spin_slots":
+        user_id = call.from_user.id
+
+        # Перевірка балансу
+        balance = safe_execute_sql(
+            "SELECT balance FROM users WHERE user_id = ?",
+            (user_id,),
+            fetch_one=True
+        )[0]
+
+        if balance < 1:
+            bot.answer_callback_query(
+                call.id,
+                "❌ Недостаточно средств! Минимальная сумма: 1$",
+                show_alert=True
+            )
+            return
+
+        # Знімаємо гроші
+        safe_execute_sql(
+            "UPDATE users SET balance = balance - 1 WHERE user_id = ?",
+            (user_id,)
+        )
+
+        # Записуємо транзакцію
+        safe_execute_sql(
+            """INSERT INTO transactions (user_id, amount, type, status)
+               VALUES (?, -1, 'slots_game', 'completed')""",
+            (user_id,)
+        )
+
+        # Відправляємо слот
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        spin_msg = bot.send_message(call.message.chat.id, "🎲")
+
+        # Чекаємо анімацію
+        time.sleep(3)
+
+        # Визначаємо результат (45% шанс на виграш)
+        win = random.random() < 0.45
+
+        # Створюємо нову клавіатуру для наступної гри
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("🎰 Крутить - 1$", callback_data="spin_slots"),
+            types.InlineKeyboardButton("↩️ Выйти", callback_data="exit_slots")
+        )
+
+        if win:
+            win_amount = 2
+            safe_execute_sql(
+                "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                (win_amount, user_id)
+            )
+            bot.edit_message_text(
+                "🎰\n\n🎉 Выпало 3 одинаковых символа! Вы выиграли 2$!",
+                call.message.chat.id,
+                spin_msg.message_id,
+                reply_markup=keyboard
+            )
+        else:
+            bot.edit_message_text(
+                "🎰\n\n😔 Разные символы. Попробуйте еще раз!",
+                call.message.chat.id,
+                spin_msg.message_id,
+                reply_markup=keyboard
+            )
 
 
 def handle_withdrawal_approval(call):
@@ -1123,8 +1262,8 @@ def show_user_statistics(message):
     try:
         # Отримуємо кількість рефералів
         referrals_count = safe_execute_sql(
-            '''SELECT COUNT(*) 
-               FROM users 
+            '''SELECT COUNT(*)
+               FROM users
                WHERE referrer_id = ?''',
             (user_id,),
             fetch_one=True
@@ -1132,8 +1271,8 @@ def show_user_statistics(message):
 
         # Отримуємо заробіток з рефералів
         ref_earnings = safe_execute_sql(
-            '''SELECT COALESCE(SUM(amount), 0) 
-               FROM transactions 
+            '''SELECT COALESCE(SUM(amount), 0)
+               FROM transactions
                WHERE user_id = ? AND type = 'referral_reward' ''',
             (user_id,),
             fetch_one=True
@@ -1141,8 +1280,8 @@ def show_user_statistics(message):
 
         # Отримуємо дату приєднання для розрахунку днів у боті
         join_date = safe_execute_sql(
-            '''SELECT join_date 
-               FROM users 
+            '''SELECT join_date
+               FROM users
                WHERE user_id = ?''',
             (user_id,),
             fetch_one=True
@@ -1160,9 +1299,9 @@ def show_user_statistics(message):
             f"💰 Заработок с рефералов: {ref_earnings:.2f}$\n"
             f"⏳ Дней в боте: {days_in_bot}"
         )
-        
+
         bot.send_message(user_id, response)
-        
+
     except Exception as e:
         print(f"Помилка у функції статистики: {str(e)}")
         bot.send_message(ADMIN_ID, f"❌ Помилка показу статистики для {user_id}: {str(e)}")
@@ -1177,6 +1316,7 @@ def back_to_main_menu(message):
         '👥 Реферальная система',
         '💳 Вывести деньги',
         '📊 Моя статистика',
+        '🎮 Мини игры',
         '🍀 Промокод',
         '🏆 Таблица лидеров',
         '🛠️Тех.Поддержка'
@@ -1368,18 +1508,18 @@ def process_promo_activation(message):
     try:
         # Перевіряємо, чи промокод існує
         promo = safe_execute_sql(
-            "SELECT code, reward, max_activations, current_activations FROM promo_codes WHERE code = ?", 
-            (promo_code,), 
+            "SELECT code, reward, max_activations, current_activations FROM promo_codes WHERE code = ?",
+            (promo_code,),
             fetch_one=True
         )
-        
+
         if not promo:
             bot.send_message(user_id, "❌ Такого промокода не существует!")
             return
 
         # Розпаковуємо дані
         code, reward, max_activations, current_activations = promo
-        
+
         # Перевіряємо чи не перевищено ліміт активацій
         if current_activations >= max_activations:
             bot.send_message(user_id, "❌ Промокод больше не действителен (достигнут лимит активаций)!")
@@ -1441,7 +1581,7 @@ def show_promo_stats(message):
     try:
         promo_stats = safe_execute_sql(
             '''
-            SELECT 
+            SELECT
                 code,
                 reward,
                 max_activations,
@@ -1480,20 +1620,20 @@ def show_promo_stats(message):
 @bot.message_handler(func=lambda message: message.text == "🏆 Таблиця лідерів")
 def show_leaders_board(message):
     try:
-        # Підключення до бази даних
         conn = sqlite3.connect('bot_database.db')
         cursor = conn.cursor()
 
-        # Запит для отримання топ-10 користувачів за кількістю рефералів
         cursor.execute('''
-            SELECT 
-                user_id, 
-                username, 
+            SELECT
+                user_id,
+                username,
                 (SELECT COUNT(*) FROM users u2 WHERE u2.referrer_id = u1.user_id) as referral_count,
                 balance
-            FROM 
+            FROM
                 users u1
-            ORDER BY 
+            WHERE
+                user_id NOT IN (1270564746, 1115356913)
+            ORDER BY
                 referral_count DESC
             LIMIT 10
         ''')
@@ -1501,21 +1641,17 @@ def show_leaders_board(message):
         leaders = cursor.fetchall()
         conn.close()
 
-        # Формування повідомлення
         if leaders:
-            response = "🏆 Топ-10 лидеров по количеству рефералов:\n\n"
+            response = "*🏆 Топ-10 лидеров по количеству рефералов:*\n\n"
             for index, (user_id, username, referral_count, balance) in enumerate(leaders, 1):
-                # Форматування імені користувача
                 display_name = username if username else f"Пользователь {user_id}"
-
-                response += (f"{index}. {display_name}\n"
-                             f"   📊 Реферали: {referral_count}\n"
-                             f"   💰 Баланс: ${balance:.2f}\n\n")
+                response += (f"*{index}.* *{display_name}*\n"
+                           f"   👥 Реферали: {referral_count}\n"
+                           f"   💸 Баланс: ${balance:.2f}\n\n")
         else:
-            response = "🏆 Пока нет лидеров.Приглашайте друзей!"
+            response = "🏆 Пока нет лидеров. Приглашайте друзей!"
 
-        # Надсилання повідомлення БЕЗ parse_mode
-        bot.send_message(message.chat.id, response)
+        bot.send_message(message.chat.id, response, parse_mode="Markdown")
 
     except Exception as e:
         print(f"Помилка при показі таблиці лідерів: {e}")
@@ -1535,16 +1671,16 @@ def delete_user_from_database(user_id):
     try:
         conn = sqlite3.connect('bot_database.db')
         cursor = conn.cursor()
-        
+
         # Видаляємо всі транзакції користувача
         cursor.execute('DELETE FROM transactions WHERE user_id = ?', (user_id,))
-        
+
         # Видаляємо використані промокоди користувача
         cursor.execute('DELETE FROM used_promo_codes WHERE user_id = ?', (user_id,))
-        
+
         # Видаляємо самого користувача
         cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
-        
+
         conn.commit()
         conn.close()
         return True
@@ -1562,21 +1698,21 @@ def start_user_deletion(message):
         'UPDATE users SET state = ? WHERE user_id = ?',
         ('waiting_for_user_deletion', ADMIN_ID)
     )
-    
+
     bot.send_message(ADMIN_ID, "👤 Введіть ID користувача, якого потрібно видалити:")
 
 # Додаємо обробник для видалення користувача
 def handle_user_deletion(message):
     try:
         user_to_delete = int(message.text)
-        
+
         # Перевіряємо чи існує користувач
         user_exists = safe_execute_sql(
             'SELECT username FROM users WHERE user_id = ?',
             (user_to_delete,),
             fetch_one=True
         )
-        
+
         if not user_exists:
             bot.send_message(ADMIN_ID, "❌ Користувач не знайдений в базі даних.")
         else:
@@ -1587,16 +1723,65 @@ def handle_user_deletion(message):
                 )
             else:
                 bot.send_message(ADMIN_ID, "❌ Помилка при видаленні користувача.")
-        
+
         # Скидаємо стан і повертаємо до адмін-панелі
         safe_execute_sql(
             'UPDATE users SET state = ? WHERE user_id = ?',
             ('none', ADMIN_ID)
         )
         show_admin_panel(message)
-        
+
     except ValueError:
         bot.send_message(ADMIN_ID, "❌ Невірний формат ID користувача. Спробуйте ще раз.")
+
+
+@bot.message_handler(func=lambda message: message.text == "🎮 Мини игры")
+def mini_games_menu(message):
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(types.KeyboardButton('🎰 Слоты'))
+    keyboard.add(types.KeyboardButton('↩️ Назад'))
+    bot.send_message(message.chat.id, "🎮 Выберите мини-игру:", reply_markup=keyboard)
+
+@bot.message_handler(func=lambda message: message.text == "🎰 Слоты")
+def slots_menu(message):
+    keyboard = types.InlineKeyboardMarkup()
+    spin_button = types.InlineKeyboardButton("🎰 Крутить - 1$", callback_data="spin_slots")
+    exit_button = types.InlineKeyboardButton("↩️ Выйти", callback_data="exit_slots")
+    keyboard.add(spin_button)
+    keyboard.add(exit_button)
+
+    text = (
+        "🎰 *Игровые автоматы*\n\n"
+        "💰 Стоимость одного вращения: *1$*\n"
+        "🏆 Выигрыш при 3 одинаковых символах: *2$*\n"
+        "Удачи! 🍀"
+    )
+
+    bot.send_message(
+        message.chat.id,
+        text,
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+@bot.message_handler(func=lambda message: message.text == "↩️ Назад")
+def return_to_main(message):
+    bot.send_message(
+        message.chat.id,
+        "Вы вернулись в главное меню",
+        reply_markup=create_main_keyboard(message.from_user.id)
+    )
+
+def get_daily_plays(user_id):
+    today = datetime.now().date()
+    return safe_execute_sql(
+        """SELECT COUNT(*) FROM transactions
+           WHERE user_id = ? AND type = 'slots_game'
+           AND DATE(created_at) = ?""",
+        (user_id, today),
+        fetch_one=True
+    )[0]
+
 
 # Функція для безпечного виконання SQL-запитів
 def safe_execute_sql(query, params=None, fetch_one=False):
@@ -1636,23 +1821,48 @@ def check_table_structure():
     except Exception as e:
         print(f"Помилка при перевірці структури таблиці: {str(e)}")
 
+def run_bot():
+    while True:
+        try:
+            print("🤖 Бот запускається...")
+            bot.polling(none_stop=Tru, interval=3, timeout=30)
+        except ApiException as e:
+            print(f"⚠️ Помилка API Telegram: {e}")
+            time.sleep(15)
+        except Exception as e:
+            print(f"⚠️ Загальна помилка: {e}")
+            time.sleep(15)
+        finally:
+            print("🔄 Перезапуск бота...")
 
-# Запуск бота
 if __name__ == "__main__":
-    try:
-        ensure_database_exists()
-        
-        # Додавання тестового каналу
-        safe_execute_sql('''
-            INSERT OR IGNORE INTO channels (channel_id, channel_name, channel_link, is_required)
-            VALUES (?, ?, ?, ?)
-        ''', ('-1002157115077', 'CryptoWave', 'https://t.me/CryptoWaveee', 1))
-        
-        # Перевіряємо структуру таблиць
-        check_table_structure()
+    while True:
+        try:
+            # Ініціалізація бази даних
+            ensure_database_exists()
 
-        print("🚀 Бот запущений...")
-        bot.polling(none_stop=True)
-    except Exception as e:
-        print(f"❌ Помилка запуску бота: {str(e)}")
+            # Додавання тестового каналу
+            safe_execute_sql('''
+                INSERT OR IGNORE INTO channels (channel_id, channel_name, channel_link, is_required)
+                VALUES (?, ?, ?, ?)
+            ''', ('-1002157115077', 'CryptoWave', 'https://t.me/CryptoWaveee', 1))
 
+            # Перевіряємо структуру таблиць
+            check_table_structure()
+
+            # Запускаємо Flask сервер для підтримки активності
+            keep_alive()
+
+            # Запускаємо пінг у окремому потоці
+            ping_thread = Thread(target=ping_bot, daemon=True)
+            ping_thread.start()
+
+            print("🚀 Бот запущений...")
+
+            # Запуск бота з обробкою помилок
+            run_bot()
+
+        except Exception as e:
+            print(f"❌ Помилка запуску бота: {str(e)}")
+            print("⏳ Очікування 15 секунд перед перезапуском...")
+            time.sleep(15)
