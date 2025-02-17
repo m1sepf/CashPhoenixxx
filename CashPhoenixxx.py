@@ -1,3 +1,4 @@
+
 import telebot
 from telebot import types
 import sqlite3
@@ -35,7 +36,7 @@ def home():
     return "I'm alive"
 
 def run():
-    app.run(host='0.0.0.0', port=3457)
+    app.run(host='0.0.0.0', port=3458)
 
 def keep_alive():
     """Створює та запускає сервер у окремому потоці"""
@@ -98,8 +99,8 @@ def safe_db_connect():
 
 def safe_execute_sql(query, params=None, fetch_one=False):
     """Функція для безпечного виконання SQL-запитів"""
+    conn = None
     try:
-
         conn = sqlite3.connect('bot_database.db')
         cursor = conn.cursor()
 
@@ -119,12 +120,18 @@ def safe_execute_sql(query, params=None, fetch_one=False):
         print(f"Query result: {result}")
 
         conn.commit()
-        conn.close()
         return result
+
     except Exception as e:
         error_message = f"Database error: {str(e)}"
         print(error_message)
+        if conn:
+            conn.rollback()
         return None
+
+    finally:
+        if conn:
+            conn.close()
 
 def init_db():
     """Функція для ініціалізації бази даних"""
@@ -652,9 +659,11 @@ def handle_text(message):
             '📢 Розсилка': start_broadcast,
             '💵 Змінити баланс': start_balance_change,
             '📁 Управління каналами': show_channel_management,
+            '📝 Заявки': show_withdrawal_requests,  # Нова команда
             '➕ Додати канал': start_adding_channel,
             '🎫 Статистика промокодів': show_promo_stats,
             '➕ Додати промокод': start_adding_promo,
+            '❌ Видалити користувача': start_user_deletion,
             '🔙 Назад': back_to_main_menu
         }
         if text in admin_commands:
@@ -1003,6 +1012,7 @@ def show_admin_panel(message):
         '➕ Додати канал',
         '🎫 Статистика промокодів',
         '➕ Додати промокод',
+        '📝 Заявки',
         '❌ Видалити користувача',
         '🔙 Назад'
     ]
@@ -1100,58 +1110,127 @@ def process_broadcast(message):
     )
 
 
-# Колбек-обробники
+def safe_send_message(chat_id, text, reply_markup=None, parse_mode=None):
+    """
+    Безпечна відправка повідомлень з обробкою помилок
+    """
+    try:
+        return bot.send_message(
+            chat_id,
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+    except telebot.apihelper.ApiTelegramException as e:
+        if e.error_code == 403:  # Користувач заблокував бота
+            print(f"User {chat_id} has blocked the bot")
+            # Тут можна додати логіку для позначення користувача як неактивного в БД
+            safe_execute_sql(
+                "UPDATE users SET state = 'blocked' WHERE user_id = ?",
+                (chat_id,)
+            )
+        else:
+            print(f"Telegram API error: {e}")
+        return None
+    except Exception as e:
+        print(f"Error sending message: {e}")
+        return None
+
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback_query(call):
-    print("Callback received:", call.data)  # Перевіряємо, чи взагалі приходять запити
+    try:
+        print("Callback received:", call.data)
 
-    if "check_subscription" in call.data:
-        check_user_subscription(call)
-    elif "approve_withdrawal" in call.data:
-        handle_withdrawal_approval(call)
-    elif "reject_withdrawal" in call.data:
-        handle_withdrawal_rejection(call)
-    elif call.data == "exit_slots":
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.send_message(
+        if "check_subscription" in call.data:
+            check_user_subscription(call)
+        elif "approve_withdrawal" in call.data:
+            handle_withdrawal_approval(call)
+        elif "reject_withdrawal" in call.data:
+            handle_withdrawal_rejection(call)
+        elif call.data == "exit_slots":
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except:
+                pass  # Ігноруємо помилки при видаленні повідомлення
+
+            safe_send_message(
+                call.message.chat.id,
+                "👋 Спасибо за игру!",
+                reply_markup=create_main_keyboard(call.from_user.id)
+            )
+        elif call.data == "spin_slots":
+            handle_spin_slots(call)
+
+    except telebot.apihelper.ApiTelegramException as e:
+        if e.error_code == 403:
+            print(f"User {call.from_user.id} has blocked the bot")
+            safe_execute_sql(
+                "UPDATE users SET state = 'blocked' WHERE user_id = ?",
+                (call.from_user.id,)
+            )
+        else:
+            print(f"Telegram API error in callback: {e}")
+    except Exception as e:
+        print(f"Error in callback handler: {e}")
+
+def handle_spin_slots(call):
+    """Окрема функція для обробки спінів в слотах"""
+    user_id = call.from_user.id
+
+    # Перевірка балансу з обробкою помилок
+    balance_result = safe_execute_sql(
+        "SELECT balance FROM users WHERE user_id = ?",
+        (user_id,),
+        fetch_one=True
+    )
+
+    if balance_result is None:
+        safe_send_message(
             call.message.chat.id,
-            "👋 Спасибо за игру!",
-            reply_markup=create_main_keyboard(call.from_user.id)
+            "❌ Произошла ошибка при проверке баланса. Попробуйте позже."
         )
-    elif call.data == "spin_slots":
-        user_id = call.from_user.id
+        return
 
-        # Перевірка балансу
-        balance = safe_execute_sql(
-            "SELECT balance FROM users WHERE user_id = ?",
-            (user_id,),
-            fetch_one=True
-        )[0]
+    balance = balance_result[0]
 
-        if balance < 1:
+    if balance < 1:
+        try:
             bot.answer_callback_query(
                 call.id,
                 "❌ Недостаточно средств! Минимальная сумма: 1$",
                 show_alert=True
             )
-            return
+        except:
+            safe_send_message(
+                call.message.chat.id,
+                "❌ Недостаточно средств! Минимальная сумма: 1$"
+            )
+        return
 
-        # Знімаємо гроші
-        safe_execute_sql(
-            "UPDATE users SET balance = balance - 1 WHERE user_id = ?",
-            (user_id,)
-        )
+    # Знімаємо гроші
+    update_result = safe_execute_sql(
+        "UPDATE users SET balance = balance - 1 WHERE user_id = ?",
+        (user_id,)
+    )
 
-        # Записуємо транзакцію
-        safe_execute_sql(
-            """INSERT INTO transactions (user_id, amount, type, status)
-               VALUES (?, -1, 'slots_game', 'completed')""",
-            (user_id,)
+    if update_result is None:
+        safe_send_message(
+            call.message.chat.id,
+            "❌ Произошла ошибка при обновлении баланса. Попробуйте позже."
         )
+        return
+
+    try:
+        # Видаляємо старе повідомлення
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
 
         # Відправляємо слот
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        spin_msg = bot.send_message(call.message.chat.id, "🎲")
+        spin_msg = safe_send_message(call.message.chat.id, "🎲")
+        if not spin_msg:
+            return
 
         # Чекаємо анімацію
         time.sleep(3)
@@ -1159,7 +1238,7 @@ def handle_callback_query(call):
         # Визначаємо результат (45% шанс на виграш)
         win = random.random() < 0.45
 
-        # Створюємо нову клавіатуру для наступної гри
+        # Створюємо нову клавіатуру
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(
             types.InlineKeyboardButton("🎰 Крутить - 1$", callback_data="spin_slots"),
@@ -1168,23 +1247,52 @@ def handle_callback_query(call):
 
         if win:
             win_amount = 2
-            safe_execute_sql(
+            win_update = safe_execute_sql(
                 "UPDATE users SET balance = balance + ? WHERE user_id = ?",
                 (win_amount, user_id)
             )
-            bot.edit_message_text(
-                "🎰\n\n🎉 Выпало 3 одинаковых символа! Вы выиграли 2$!",
-                call.message.chat.id,
-                spin_msg.message_id,
-                reply_markup=keyboard
-            )
+
+            if win_update is None:
+                safe_send_message(
+                    call.message.chat.id,
+                    "❌ Произошла ошибка при начислении выигрыша. Обратитесь в поддержку."
+                )
+                return
+
+            try:
+                bot.edit_message_text(
+                    "🎰\n\n🎉 Выпало 3 одинаковых символа! Вы выиграли 2$!",
+                    call.message.chat.id,
+                    spin_msg.message_id,
+                    reply_markup=keyboard
+                )
+            except:
+                safe_send_message(
+                    call.message.chat.id,
+                    "🎰\n\n🎉 Выпало 3 одинаковых символа! Вы выиграли 2$!",
+                    reply_markup=keyboard
+                )
         else:
-            bot.edit_message_text(
-                "🎰\n\n😔 Разные символы. Попробуйте еще раз!",
-                call.message.chat.id,
-                spin_msg.message_id,
-                reply_markup=keyboard
-            )
+            try:
+                bot.edit_message_text(
+                    "🎰\n\n😔 Разные символы. Попробуйте еще раз!",
+                    call.message.chat.id,
+                    spin_msg.message_id,
+                    reply_markup=keyboard
+                )
+            except:
+                safe_send_message(
+                    call.message.chat.id,
+                    "🎰\n\n😔 Разные символы. Попробуйте еще раз!",
+                    reply_markup=keyboard
+                )
+
+    except Exception as e:
+        print(f"Error in slots game for user {user_id}: {str(e)}")
+        safe_send_message(
+            call.message.chat.id,
+            "❌ Произошла ошибка в игре. Пожалуйста, попробуйте еще раз."
+        )
 
 
 def handle_withdrawal_approval(call):
@@ -1617,7 +1725,7 @@ def show_promo_stats(message):
         print(f"Ошибка show_promo_stats: {str(e)}")
 
 
-@bot.message_handler(func=lambda message: message.text == "🏆 Таблиця лідерів")
+@bot.message_handler(func=lambda message: message.text == "🏆 Таблица лидеров")
 def show_leaders_board(message):
     try:
         conn = sqlite3.connect('bot_database.db')
@@ -1625,14 +1733,17 @@ def show_leaders_board(message):
 
         cursor.execute('''
             SELECT
-                user_id,
-                username,
-                (SELECT COUNT(*) FROM users u2 WHERE u2.referrer_id = u1.user_id) as referral_count,
-                balance
+                u1.user_id,
+                u1.username,
+                COUNT(DISTINCT rh.referral_user_id) as referral_count,
+                u1.balance
             FROM
                 users u1
+                LEFT JOIN referral_history rh ON u1.user_id = rh.referrer_id
             WHERE
-                user_id NOT IN (1270564746, 1115356913)
+                u1.user_id NOT IN (1270564746, 1115356913)
+            GROUP BY
+                u1.user_id, u1.username, u1.balance
             ORDER BY
                 referral_count DESC
             LIMIT 10
@@ -1782,6 +1893,69 @@ def get_daily_plays(user_id):
         fetch_one=True
     )[0]
 
+# Функція для показу списку заявок
+def show_withdrawal_requests(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    try:
+        # Отримуємо всі pending заявки
+        requests = safe_execute_sql(
+            '''SELECT
+                t.user_id,
+                t.amount,
+                t.ton_wallet,
+                t.created_at,
+                u.username
+               FROM transactions t
+               LEFT JOIN users u ON t.user_id = u.user_id
+               WHERE t.type = 'withdrawal'
+               AND t.status = 'pending'
+               ORDER BY t.created_at DESC'''
+        )
+
+        if not requests or len(requests) == 0:
+            bot.send_message(
+                ADMIN_ID,
+                "📝 Активних заявок на виведення немає."
+            )
+            return
+
+        # Створюємо повідомлення для кожної заявки
+        for req in requests:
+            user_id, amount, wallet, created_at, username = req
+            username = username if username else f"User {user_id}"
+
+            request_msg = (
+                f"💳 Заявка на виведення\n\n"
+                f"👤 Користувач: {username}\n"
+                f"🆔 ID: {user_id}\n"
+                f"💰 Сума: {amount:.2f}$\n"
+                f"🔑 TON гаманець: {wallet}\n"
+                f"📅 Створено: {created_at}"
+            )
+
+            keyboard = types.InlineKeyboardMarkup()
+            approve_button = types.InlineKeyboardButton(
+                "✅ Підтвердити",
+                callback_data=f"approve_withdrawal_{user_id}_{amount}"
+            )
+            reject_button = types.InlineKeyboardButton(
+                "❌ Відхилити",
+                callback_data=f"reject_withdrawal_{user_id}_{amount}"
+            )
+            keyboard.add(approve_button, reject_button)
+
+            bot.send_message(
+                ADMIN_ID,
+                request_msg,
+                reply_markup=keyboard
+            )
+
+    except Exception as e:
+        error_msg = f"❌ Помилка при отриманні заявок: {str(e)}"
+        print(error_msg)
+        bot.send_message(ADMIN_ID, error_msg)
 
 # Функція для безпечного виконання SQL-запитів
 def safe_execute_sql(query, params=None, fetch_one=False):
@@ -1825,7 +1999,7 @@ def run_bot():
     while True:
         try:
             print("🤖 Бот запускається...")
-            bot.polling(none_stop=Tru, interval=3, timeout=30)
+            bot.polling(none_stop=True, interval=3, timeout=30)
         except ApiException as e:
             print(f"⚠️ Помилка API Telegram: {e}")
             time.sleep(15)
